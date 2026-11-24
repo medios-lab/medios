@@ -1,0 +1,12 @@
+#!/bin/sh
+# medios-python: run a Python script with the Medios SDK importable.
+# The SDK wheel ships in <bundle>/vendor, so no git or PyPI account is needed
+# for it; pydantic, its one dependency, comes from PyPI.
+set -eu
+. "$(dirname "$0")/uv-env.sh"
+wheel=$(ls "$bundle"/vendor/medios_sdk-*.whl 2>/dev/null | head -n 1)
+if [ -z "$wheel" ]; then
+  printf '{"ok":false,"step":"sdk","error":"no medios_sdk wheel in %s/vendor; this bundle was not built with try/build-bundle"}\n' "$bundle"
+  exit 1
+fi
+exec "$uv" run --quiet --no-project --python "$MEDIOS_TRY_PYTHON" --with "$wheel" python "$@"

@@ -1,0 +1,18 @@
+{
+  "medios_version": "v0.1.13",
+  "download_base": "https://github.com/medios-lab/medios/releases/download/v0.1.13",
+  "archives": {
+    "darwin-arm64": {
+      "name": "medios-9351d105e5d202c166f3814feb324b28a236156c-darwin-arm64.tar.gz",
+      "sha256": "aee98a2537193d0065b8a1d23b9059d12767fd9fa8deb06a3162343907f30bec"
+    },
+    "linux-amd64": {
+      "name": "medios-9351d105e5d202c166f3814feb324b28a236156c-linux-amd64.tar.gz",
+      "sha256": "d4ae1659f96c1201d72038ce4fca7728d4b619ae5083424b398feba21a9beea7"
+    },
+    "linux-arm64": {
+      "name": "medios-9351d105e5d202c166f3814feb324b28a236156c-linux-arm64.tar.gz",
+      "sha256": "608eb64410e238e5a9749acfcd027bfa3893b15c30cf292931f7156ebe63b074"
+    }
+  }
+}
