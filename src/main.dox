@@ -1,0 +1,9 @@
+/**
+ * @mainpage Medios API Documentation
+ *
+ * Medios API documentation. Medios is a fork of Apache Mesos; the lineage is recorded in NOTICE.
+ *
+ * @section developer-guide Developer Guides
+ *   * [Libprocess developer guide](../libprocess/README.md)
+ *   * [Stout developer guide](../stout/README.md)
+ */

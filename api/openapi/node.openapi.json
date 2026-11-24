@@ -1,0 +1,1759 @@
+{
+  "openapi": "3.2.0",
+  "info": {
+    "title": "Medios Node HTTP API",
+    "version": "1.0.0",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "description": "OpenAPI skeleton for the Medios node HTTP surface. The v1 APIs use real RPC-style paths whose request body type field selects the logical call."
+  },
+  "externalDocs": {
+    "description": "Node, executor, and operator HTTP API documentation",
+    "url": "../../docs/operator-http-api.md"
+  },
+  "x-medios-service": "node",
+  "servers": [
+    {
+      "url": "http://{host}:{port}",
+      "description": "Node process",
+      "variables": {
+        "host": {
+          "default": "nodehost",
+          "description": "Node hostname or IP address."
+        },
+        "port": {
+          "default": "5051",
+          "description": "Node HTTP port."
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "name": "Node v1 API",
+      "description": "Typed operator calls accepted by POST /api/v1."
+    },
+    {
+      "name": "Executor API",
+      "description": "Typed executor calls accepted by POST /api/v1/executor."
+    },
+    {
+      "name": "Resource Provider API",
+      "description": "Typed resource provider calls accepted by POST /api/v1/resource_provider."
+    },
+    {
+      "name": "Node legacy routes",
+      "description": "Path-style node routes retained for compatibility."
+    },
+    {
+      "name": "Common process routes",
+      "description": "Shared libprocess and Medios utility routes exposed by the node process."
+    }
+  ],
+  "security": [],
+  "paths": {
+    "/api/v1": {
+      "post": {
+        "tags": ["Node v1 API"],
+        "operationId": "postNodeV1",
+        "summary": "Submit a node operator API call",
+        "description": "Submits a typed node Call. The JSON body field `type` selects the logical call. Some attach/session calls use request or response streaming.",
+        "x-medios-source-path": "src/node/node.cpp",
+        "x-medios-authentication-realm": "readwrite",
+        "x-medios-typed-rpc": true,
+        "x-medios-proto": "include/medios/v1/node/node.proto",
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "x-medios-call-types": [
+          "GET_HEALTH",
+          "GET_FLAGS",
+          "GET_VERSION",
+          "GET_METRICS",
+          "GET_LOGGING_LEVEL",
+          "SET_LOGGING_LEVEL",
+          "LIST_FILES",
+          "READ_FILE",
+          "GET_STATE",
+          "GET_CONTAINERS",
+          "GET_FRAMEWORKS",
+          "GET_EXECUTORS",
+          "GET_OPERATIONS",
+          "GET_TASKS",
+          "GET_NODE",
+          "GET_RESOURCE_PROVIDERS",
+          "LAUNCH_NESTED_CONTAINER",
+          "WAIT_NESTED_CONTAINER",
+          "KILL_NESTED_CONTAINER",
+          "REMOVE_NESTED_CONTAINER",
+          "LAUNCH_NESTED_CONTAINER_SESSION",
+          "ATTACH_CONTAINER_INPUT",
+          "ATTACH_CONTAINER_OUTPUT",
+          "LAUNCH_CONTAINER",
+          "WAIT_CONTAINER",
+          "KILL_CONTAINER",
+          "REMOVE_CONTAINER",
+          "ADD_RESOURCE_PROVIDER_CONFIG",
+          "UPDATE_RESOURCE_PROVIDER_CONFIG",
+          "REMOVE_RESOURCE_PROVIDER_CONFIG",
+          "MARK_RESOURCE_PROVIDER_GONE",
+          "PRUNE_IMAGES"
+        ],
+        "x-medios-response-types": [
+          "GET_HEALTH",
+          "GET_FLAGS",
+          "GET_VERSION",
+          "GET_METRICS",
+          "GET_LOGGING_LEVEL",
+          "LIST_FILES",
+          "READ_FILE",
+          "GET_STATE",
+          "GET_CONTAINERS",
+          "GET_FRAMEWORKS",
+          "GET_EXECUTORS",
+          "GET_OPERATIONS",
+          "GET_TASKS",
+          "GET_NODE",
+          "GET_RESOURCE_PROVIDERS",
+          "WAIT_NESTED_CONTAINER",
+          "WAIT_CONTAINER"
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/NodeCall"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/NodeResponse"
+          },
+          "202": {
+            "$ref": "#/components/responses/Accepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "406": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/executor": {
+      "post": {
+        "tags": ["Executor API"],
+        "operationId": "postExecutorV1",
+        "summary": "Submit an executor API call",
+        "description": "Submits a typed executor Call. SUBSCRIBE returns a RecordIO-framed event stream.",
+        "x-medios-source-path": "src/node/node.cpp",
+        "x-medios-authentication-realm": "executor",
+        "x-medios-typed-rpc": true,
+        "x-medios-proto": "include/medios/v1/executor/executor.proto",
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "x-medios-call-types": [
+          "SUBSCRIBE",
+          "UPDATE",
+          "MESSAGE",
+          "HEARTBEAT"
+        ],
+        "x-medios-event-types": [
+          "SUBSCRIBED",
+          "LAUNCH",
+          "LAUNCH_GROUP",
+          "KILL",
+          "ACKNOWLEDGED",
+          "MESSAGE",
+          "ERROR",
+          "SHUTDOWN",
+          "HEARTBEAT"
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ExecutorCall"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ExecutorStream"
+          },
+          "202": {
+            "$ref": "#/components/responses/Accepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "406": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/resource_provider": {
+      "post": {
+        "tags": ["Resource Provider API"],
+        "operationId": "postResourceProviderV1",
+        "summary": "Submit a resource provider API call",
+        "description": "Submits a typed resource provider Call. SUBSCRIBE returns a RecordIO-framed event stream and all non-SUBSCRIBE calls require the Medios-Stream-Id header.",
+        "x-medios-source-path": "src/node/node.cpp",
+        "x-medios-authentication-realm": "resource-provider",
+        "x-medios-typed-rpc": true,
+        "x-medios-proto": "include/medios/v1/resource_provider/resource_provider.proto",
+        "security": [
+          {
+            "basicAuth": []
+          }
+        ],
+        "x-medios-call-types": [
+          "SUBSCRIBE",
+          "UPDATE_OPERATION_STATUS",
+          "UPDATE_STATE",
+          "UPDATE_PUBLISH_RESOURCES_STATUS"
+        ],
+        "x-medios-event-types": [
+          "SUBSCRIBED",
+          "APPLY_OPERATION",
+          "PUBLISH_RESOURCES",
+          "ACKNOWLEDGE_OPERATION_STATUS",
+          "RECONCILE_OPERATIONS",
+          "TEARDOWN"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MediosStreamId"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ResourceProviderCall"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ResourceProviderStream"
+          },
+          "202": {
+            "$ref": "#/components/responses/Accepted"
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "406": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/__processes__": {
+      "$ref": "#/components/pathItems/ProcessIntrospection"
+    },
+    "/containerizer/debug": {
+      "$ref": "#/components/pathItems/NodeLegacyRead"
+    },
+    "/containers": {
+      "$ref": "#/components/pathItems/NodeLegacyRead"
+    },
+    "/files/browse": {
+      "$ref": "#/components/pathItems/FilesBrowse"
+    },
+    "/files/debug": {
+      "$ref": "#/components/pathItems/FilesDebug"
+    },
+    "/files/download": {
+      "$ref": "#/components/pathItems/FilesDownload"
+    },
+    "/files/read": {
+      "$ref": "#/components/pathItems/FilesRead"
+    },
+    "/flags": {
+      "$ref": "#/components/pathItems/NodeLegacyRead"
+    },
+    "/health": {
+      "$ref": "#/components/pathItems/PublicHealth"
+    },
+    "/help": {
+      "$ref": "#/components/pathItems/HelpIndex"
+    },
+    "/help/{processId}": {
+      "$ref": "#/components/pathItems/HelpProcess"
+    },
+    "/help/{processId}/{endpointName}": {
+      "$ref": "#/components/pathItems/HelpEndpoint"
+    },
+    "/logging/toggle": {
+      "$ref": "#/components/pathItems/LoggingToggle"
+    },
+    "/memory-profiler/download/graph": {
+      "$ref": "#/components/pathItems/MemoryProfilerDownloadGraph"
+    },
+    "/memory-profiler/download/raw": {
+      "$ref": "#/components/pathItems/MemoryProfilerDownloadRaw"
+    },
+    "/memory-profiler/download/text": {
+      "$ref": "#/components/pathItems/MemoryProfilerDownloadText"
+    },
+    "/memory-profiler/start": {
+      "$ref": "#/components/pathItems/MemoryProfilerStart"
+    },
+    "/memory-profiler/state": {
+      "$ref": "#/components/pathItems/MemoryProfilerState"
+    },
+    "/memory-profiler/statistics": {
+      "$ref": "#/components/pathItems/MemoryProfilerStatistics"
+    },
+    "/memory-profiler/stop": {
+      "$ref": "#/components/pathItems/MemoryProfilerStop"
+    },
+    "/metrics/snapshot": {
+      "$ref": "#/components/pathItems/MetricsSnapshot"
+    },
+    "/monitor/statistics": {
+      "$ref": "#/components/pathItems/NodeLegacyRead"
+    },
+    "/profiler/start": {
+      "$ref": "#/components/pathItems/ProfilerStart"
+    },
+    "/profiler/stop": {
+      "$ref": "#/components/pathItems/ProfilerStop"
+    },
+    "/state": {
+      "$ref": "#/components/pathItems/NodeLegacyRead"
+    },
+    "/system/stats.json": {
+      "$ref": "#/components/pathItems/SystemStats"
+    },
+    "/openapi.json": {
+      "$ref": "#/components/pathItems/OpenApiSpec"
+    },
+    "/.well-known/openapi.json": {
+      "$ref": "#/components/pathItems/OpenApiSpec"
+    },
+    "/version": {
+      "$ref": "#/components/pathItems/Version"
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "basicAuth": {
+        "type": "http",
+        "scheme": "basic"
+      }
+    },
+    "parameters": {
+      "MediosStreamId": {
+        "name": "Medios-Stream-Id",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "description": "Required on non-SUBSCRIBE resource provider calls. Must be omitted on SUBSCRIBE."
+      },
+      "EndpointName": {
+        "name": "endpointName",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Route name under a libprocess process. Runtime help accepts nested route names containing slashes; this path template documents the common single-segment shape."
+      },
+      "FileLength": {
+        "name": "length",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "description": "Maximum number of bytes to read."
+      },
+      "FileOffset": {
+        "name": "offset",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "description": "Byte offset within the file."
+      },
+      "FilePath": {
+        "name": "path",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Virtual or host path exposed through the files process, including task sandboxes and read-only node-declared store virtual paths at /stores/{name} (DR-036)."
+      },
+      "Format": {
+        "name": "format",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "enum": ["json"]
+        }
+      },
+      "Jsonp": {
+        "name": "jsonp",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Optional JSONP callback name accepted by legacy JSON endpoints."
+      },
+      "LoggingDuration": {
+        "name": "duration",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Duration to keep the temporary logging verbosity."
+      },
+      "LoggingLevel": {
+        "name": "level",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "description": "Temporary verbose logging level."
+      },
+      "MetricsTimeout": {
+        "name": "timeout",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Maximum duration to wait for metric collection."
+      },
+      "ProcessId": {
+        "name": "processId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Libprocess process identifier such as node, files, metrics, or version."
+      },
+      "ProfileDuration": {
+        "name": "duration",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Profiling duration."
+      },
+      "ProfileId": {
+        "name": "id",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Memory profiling artifact id."
+      }
+    },
+    "requestBodies": {
+      "NodeCall": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/NodeCall"
+            }
+          },
+          "application/x-protobuf": {
+            "schema": {
+              "type": "string",
+              "format": "binary"
+            }
+          }
+        }
+      },
+      "ExecutorCall": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ExecutorCall"
+            }
+          },
+          "application/x-protobuf": {
+            "schema": {
+              "type": "string",
+              "format": "binary"
+            }
+          }
+        }
+      },
+      "ResourceProviderCall": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResourceProviderCall"
+            }
+          },
+          "application/x-protobuf": {
+            "schema": {
+              "type": "string",
+              "format": "binary"
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Accepted": {
+        "description": "The request was accepted for asynchronous processing."
+      },
+      "NodeResponse": {
+        "description": "Synchronous node response or streamed node payload for attach/session calls.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/NodeResponse"
+            }
+          },
+          "application/x-protobuf": {
+            "schema": {
+              "type": "string",
+              "format": "binary"
+            }
+          }
+        }
+      },
+      "ExecutorStream": {
+        "description": "RecordIO-framed executor event stream.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ExecutorEvent"
+            },
+            "x-medios-recordio": true
+          },
+          "application/x-protobuf": {
+            "schema": {
+              "type": "string",
+              "format": "binary"
+            },
+            "x-medios-recordio": true
+          }
+        }
+      },
+      "ResourceProviderStream": {
+        "description": "RecordIO-framed resource provider event stream.",
+        "headers": {
+          "Medios-Stream-Id": {
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ResourceProviderEvent"
+            },
+            "x-medios-recordio": true
+          },
+          "application/x-protobuf": {
+            "schema": {
+              "type": "string",
+              "format": "binary"
+            },
+            "x-medios-recordio": true
+          }
+        }
+      },
+      "Error": {
+        "description": "Error response.",
+        "content": {
+          "text/plain": {
+            "schema": {
+              "type": "string"
+            }
+          },
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "pathItems": {
+      "NodeLegacyRead": {
+        "get": {
+          "tags": ["Node legacy routes"],
+          "summary": "Read node state through a path-style route",
+          "x-medios-source-path": "src/node/node.cpp",
+          "security": [
+            {
+              "basicAuth": []
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Successful response."
+            },
+            "401": {
+              "$ref": "#/components/responses/Error"
+            },
+            "403": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "PublicHealth": {
+        "get": {
+          "tags": ["Node legacy routes"],
+          "operationId": "getNodeHealth",
+          "summary": "Fetch node health",
+          "x-medios-source-path": "src/node/node.cpp",
+          "responses": {
+            "200": {
+              "description": "Node health response."
+            }
+          }
+        }
+      },
+      "FilesBrowse": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Browse files exposed by the files process",
+          "description": "Lists directory entries under a registered virtual path, including task sandboxes and read-only node-declared store directories attached at /stores/{name} (DR-036).",
+          "x-medios-source-path": "src/files/files.cpp",
+          "x-medios-virtual-paths": [
+            "/stores/{name}"
+          ],
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/FilePath"
+            },
+            {
+              "$ref": "#/components/parameters/Jsonp"
+            }
+          ],
+          "security": [
+            {
+              "basicAuth": []
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Directory listing."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            },
+            "403": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "FilesDebug": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Inspect files process virtual path mappings",
+          "x-medios-source-path": "src/files/files.cpp",
+          "security": [
+            {
+              "basicAuth": []
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Virtual path mapping response."
+            },
+            "403": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "FilesDownload": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Download a file exposed by the files process",
+          "description": "Downloads raw file contents from a registered virtual path, including task sandboxes and read-only node-declared stores at /stores/{name} (DR-036).",
+          "x-medios-source-path": "src/files/files.cpp",
+          "x-medios-virtual-paths": [
+            "/stores/{name}"
+          ],
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/FilePath"
+            }
+          ],
+          "security": [
+            {
+              "basicAuth": []
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Raw file contents."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            },
+            "403": {
+              "$ref": "#/components/responses/Error"
+            },
+            "404": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "FilesRead": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Read a UTF-8 text slice exposed by the files process",
+          "description": "Reads a UTF-8 text slice from a registered virtual path, including task sandboxes and read-only node-declared stores at /stores/{name} (DR-036). Returns `{\"offset\", \"data\"}` where `data` is a JSON string (use `/files/download` for raw binary bytes, #582) and `offset` echoes the starting byte offset of the returned chunk (or the file size when `offset=-1`), so log tailers compute the next poll offset as `offset + len(data)` (#241).",
+          "x-medios-source-path": "src/files/files.cpp",
+          "x-medios-virtual-paths": [
+            "/stores/{name}"
+          ],
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/FilePath"
+            },
+            {
+              "$ref": "#/components/parameters/FileOffset"
+            },
+            {
+              "$ref": "#/components/parameters/FileLength"
+            },
+            {
+              "$ref": "#/components/parameters/Jsonp"
+            }
+          ],
+          "security": [
+            {
+              "basicAuth": []
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "File slice response."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            },
+            "403": {
+              "$ref": "#/components/responses/Error"
+            },
+            "404": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "HelpIndex": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "List libprocess help entries",
+          "x-medios-source-path": "libprocess/src/help.cpp",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/Format"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "HTML, Markdown, or JSON help response."
+            }
+          }
+        }
+      },
+      "HelpProcess": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "List help entries for one libprocess process",
+          "x-medios-source-path": "libprocess/src/help.cpp",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/ProcessId"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "HTML or Markdown help response."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "HelpEndpoint": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Fetch help for one libprocess endpoint",
+          "x-medios-source-path": "libprocess/src/help.cpp",
+          "x-medios-catch-all-parameter": "endpointName",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/ProcessId"
+            },
+            {
+              "$ref": "#/components/parameters/EndpointName"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "HTML or Markdown help response."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "LoggingToggle": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Read or temporarily change libprocess logging verbosity",
+          "x-medios-source-path": "libprocess/include/process/logging.hpp",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/LoggingLevel"
+            },
+            {
+              "$ref": "#/components/parameters/LoggingDuration"
+            }
+          ],
+          "security": [
+            {
+              "basicAuth": []
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Current verbosity or empty success response."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            },
+            "401": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "MemoryProfilerDownloadGraph": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Download a memory profile call graph",
+          "x-medios-source-path": "libprocess/src/memory_profiler.cpp",
+          "x-medios-conditional": "Only exposed when memory profiling is enabled.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/ProfileId"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "SVG memory profile graph."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "MemoryProfilerDownloadRaw": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Download a raw memory profile",
+          "x-medios-source-path": "libprocess/src/memory_profiler.cpp",
+          "x-medios-conditional": "Only exposed when memory profiling is enabled.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/ProfileId"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Raw memory profile."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "MemoryProfilerDownloadText": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Download a symbolized memory profile",
+          "x-medios-source-path": "libprocess/src/memory_profiler.cpp",
+          "x-medios-conditional": "Only exposed when memory profiling is enabled.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/ProfileId"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Symbolized memory profile."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "MemoryProfilerStart": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Start memory profiling",
+          "x-medios-source-path": "libprocess/src/memory_profiler.cpp",
+          "x-medios-conditional": "Only exposed when memory profiling is enabled.",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/ProfileDuration"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Memory profiling started."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "MemoryProfilerState": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Inspect memory profiler state",
+          "x-medios-source-path": "libprocess/src/memory_profiler.cpp",
+          "x-medios-conditional": "Only exposed when memory profiling is enabled.",
+          "responses": {
+            "200": {
+              "description": "Memory profiler state response."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "MemoryProfilerStatistics": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Inspect jemalloc memory statistics",
+          "x-medios-source-path": "libprocess/src/memory_profiler.cpp",
+          "x-medios-conditional": "Only exposed when memory profiling is enabled.",
+          "responses": {
+            "200": {
+              "description": "Memory allocation statistics response."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "MemoryProfilerStop": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Stop memory profiling",
+          "x-medios-source-path": "libprocess/src/memory_profiler.cpp",
+          "x-medios-conditional": "Only exposed when memory profiling is enabled.",
+          "responses": {
+            "200": {
+              "description": "Memory profiling stopped."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "MetricsSnapshot": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Fetch a snapshot of process metrics",
+          "x-medios-source-path": "libprocess/src/metrics/metrics.cpp",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/MetricsTimeout"
+            },
+            {
+              "$ref": "#/components/parameters/Jsonp"
+            }
+          ],
+          "security": [
+            {
+              "basicAuth": []
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Metric name to numeric value map."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            },
+            "401": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "ProcessIntrospection": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Inspect libprocess process state",
+          "x-medios-source-path": "libprocess/src/process.cpp",
+          "responses": {
+            "200": {
+              "description": "Libprocess process introspection response."
+            }
+          }
+        }
+      },
+      "ProfilerStart": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Start CPU profiling",
+          "x-medios-source-path": "libprocess/include/process/profiler.hpp",
+          "security": [
+            {
+              "basicAuth": []
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "CPU profiling started."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            },
+            "401": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "ProfilerStop": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Stop CPU profiling and download profile output",
+          "x-medios-source-path": "libprocess/include/process/profiler.hpp",
+          "security": [
+            {
+              "basicAuth": []
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "CPU profile output."
+            },
+            "400": {
+              "$ref": "#/components/responses/Error"
+            },
+            "401": {
+              "$ref": "#/components/responses/Error"
+            }
+          }
+        }
+      },
+      "SystemStats": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Fetch local system metrics",
+          "x-medios-source-path": "libprocess/include/process/system.hpp",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/Jsonp"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Local system metrics response."
+            }
+          }
+        }
+      },
+      "Version": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Fetch Medios version information",
+          "x-medios-source-path": "src/version/version.cpp",
+          "parameters": [
+            {
+              "$ref": "#/components/parameters/Jsonp"
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Version response."
+            }
+          }
+        }
+      },
+      "OpenApiSpec": {
+        "get": {
+          "tags": ["Common process routes"],
+          "summary": "Fetch embedded OpenAPI 3.2.0 specification",
+          "x-medios-source-path": "src/node/node.cpp",
+          "responses": {
+            "200": {
+              "description": "Embedded OpenAPI JSON specification.",
+              "content": {
+                "application/openapi+json": {
+                  "schema": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "DurationInfo": {
+        "type": "object",
+        "required": ["nanoseconds"],
+        "properties": {
+          "nanoseconds": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "CommandInfo": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "shell": {
+            "type": "boolean"
+          },
+          "arguments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "uris": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["value"],
+              "properties": {
+                "value": {
+                  "type": "string"
+                },
+                "executable": {
+                  "type": "boolean"
+                },
+                "extract": {
+                  "type": "boolean"
+                },
+                "cache": {
+                  "type": "boolean"
+                },
+                "output_file": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "StoreVolume": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Declared node store name advertised as shared resource store/<name> (DR-036)."
+          },
+          "exclusive": {
+            "type": "boolean",
+            "description": "When true on an RW volume, claims all writer units of the store."
+          }
+        }
+      },
+      "VolumeSource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "UNKNOWN",
+              "DOCKER_VOLUME",
+              "SANDBOX_PATH",
+              "SECRET",
+              "HOST_PATH",
+              "CSI_VOLUME",
+              "STORE"
+            ]
+          },
+          "store": {
+            "$ref": "#/components/schemas/StoreVolume"
+          }
+        },
+        "additionalProperties": true
+      },
+      "Volume": {
+        "type": "object",
+        "required": ["mode", "container_path"],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["RW", "RO"]
+          },
+          "container_path": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/VolumeSource"
+          }
+        },
+        "additionalProperties": true
+      },
+      "TaskData": {
+        "type": "object",
+        "required": ["store", "container_path", "mode", "node_id"],
+        "properties": {
+          "store": {
+            "type": "string"
+          },
+          "container_path": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["RW", "RO"]
+          },
+          "exclusive": {
+            "type": "boolean"
+          },
+          "node_id": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "description": "Store mount attribution stamped on TaskStatus.stores (DR-036)."
+      },
+      "ProgressPolicy": {
+        "type": "object",
+        "required": ["source"],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": ["STDOUT", "FILE"]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative sandbox path when source is FILE (no '..' components)."
+          },
+          "pattern": {
+            "type": "string",
+            "description": "ECMAScript regular expression (std::regex) where capture group 1 is work percent in [0, 100] and optional capture group 2 is the progress message."
+          },
+          "sample_interval": {
+            "$ref": "#/components/schemas/DurationInfo"
+          },
+          "stall_window": {
+            "$ref": "#/components/schemas/DurationInfo"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["REPORT", "KILL"],
+            "description": "Required when stall_window is set. KILL terminates the task with TASK_FAILED and REASON_PROGRESS_STALLED (DR-040)."
+          }
+        },
+        "description": "Task progress sampling and stall-detection policy (DR-040)."
+      },
+      "TaskProgress": {
+        "type": "object",
+        "properties": {
+          "fraction": {
+            "type": "number",
+            "format": "double",
+            "minimum": 0.0,
+            "maximum": 1.0
+          },
+          "step": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "observed_at": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "description": "Typed task progress snapshot carried on TaskStatus.progress (DR-038)."
+      },
+      "TaskObserver": {
+        "type": "object",
+        "required": ["name", "command"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,32}$"
+          },
+          "command": {
+            "$ref": "#/components/schemas/CommandInfo"
+          }
+        },
+        "description": "Sidecar observer command run in the task sandbox beside the task (DR-041)."
+      },
+      "TaskFinish": {
+        "type": "object",
+        "required": ["command", "cap"],
+        "properties": {
+          "command": {
+            "$ref": "#/components/schemas/CommandInfo"
+          },
+          "cap": {
+            "$ref": "#/components/schemas/DurationInfo"
+          }
+        },
+        "description": "Post-exit hook command run in the task sandbox after the work command exits, bounded by cap (DR-042)."
+      },
+      "FinishStatus": {
+        "type": "object",
+        "required": ["state"],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": ["RAN", "TIMED_OUT", "KILLED", "DID_NOT_START", "LOST"]
+          },
+          "exit_code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "signal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "limit": {
+            "$ref": "#/components/schemas/DurationInfo"
+          },
+          "duration": {
+            "$ref": "#/components/schemas/DurationInfo"
+          }
+        },
+        "description": "Outcome of TaskInfo.finish reported on the terminal TaskStatus.finish (DR-042)."
+      },
+      "TaskReason": {
+        "type": "string",
+        "enum": [
+          "REASON_COMMAND_EXECUTOR_FAILED",
+          "REASON_CONTAINER_LAUNCH_FAILED",
+          "REASON_CONTAINER_LIMITATION",
+          "REASON_CONTAINER_LIMITATION_DISK",
+          "REASON_CONTAINER_LIMITATION_MEMORY",
+          "REASON_CONTAINER_PREEMPTED",
+          "REASON_CONTAINER_UPDATE_FAILED",
+          "REASON_MAX_COMPLETION_TIME_REACHED",
+          "REASON_EXECUTOR_REGISTRATION_TIMEOUT",
+          "REASON_EXECUTOR_REREGISTRATION_TIMEOUT",
+          "REASON_EXECUTOR_TERMINATED",
+          "REASON_EXECUTOR_UNREGISTERED",
+          "REASON_FRAMEWORK_REMOVED",
+          "REASON_GC_ERROR",
+          "REASON_INVALID_FRAMEWORKID",
+          "REASON_INVALID_OFFERS",
+          "REASON_IO_SWITCHBOARD_EXITED",
+          "REASON_CONTROLLER_DISCONNECTED",
+          "REASON_PROGRESS_STALLED",
+          "REASON_RECONCILIATION",
+          "REASON_RESOURCES_UNKNOWN",
+          "REASON_NODE_DISCONNECTED",
+          "REASON_NODE_DRAINING",
+          "REASON_NODE_REMOVED",
+          "REASON_NODE_REMOVED_BY_OPERATOR",
+          "REASON_NODE_REREGISTERED",
+          "REASON_NODE_RESTARTED",
+          "REASON_NODE_UNKNOWN",
+          "REASON_TASK_KILLED_DURING_LAUNCH",
+          "REASON_TASK_CHECK_STATUS_UPDATED",
+          "REASON_TASK_HEALTH_CHECK_STATUS_UPDATED",
+          "REASON_TASK_GROUP_INVALID",
+          "REASON_TASK_GROUP_UNAUTHORIZED",
+          "REASON_TASK_INVALID",
+          "REASON_TASK_UNAUTHORIZED",
+          "REASON_TASK_UNKNOWN"
+        ]
+      },
+      "TaskInfo": {
+        "type": "object",
+        "required": ["name", "task_id", "node_id", "principal"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          "node_id": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          "principal": {
+            "type": "string",
+            "pattern": "^(operator|team|run):[A-Za-z0-9._-]{1,64}$",
+            "description": "Required two-tier task principal attribution (DR-037)."
+          },
+          "command": {
+            "$ref": "#/components/schemas/CommandInfo"
+          },
+          "container": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["DOCKER", "MEDIOS"]
+              },
+              "volumes": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Volume"
+                }
+              }
+            },
+            "additionalProperties": true
+          },
+          "progress_policy": {
+            "$ref": "#/components/schemas/ProgressPolicy"
+          },
+          "observers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskObserver"
+            }
+          },
+          "finish": {
+            "$ref": "#/components/schemas/TaskFinish"
+          }
+        },
+        "additionalProperties": true
+      },
+      "TaskStatus": {
+        "type": "object",
+        "required": ["task_id", "state"],
+        "properties": {
+          "task_id": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "TASK_STAGING",
+              "TASK_STARTING",
+              "TASK_RUNNING",
+              "TASK_KILLING",
+              "TASK_FINISHED",
+              "TASK_FAILED",
+              "TASK_KILLED",
+              "TASK_ERROR",
+              "TASK_LOST",
+              "TASK_DROPPED",
+              "TASK_UNREACHABLE",
+              "TASK_GONE",
+              "TASK_GONE_BY_OPERATOR",
+              "TASK_UNKNOWN"
+            ]
+          },
+          "reason": {
+            "$ref": "#/components/schemas/TaskReason"
+          },
+          "message": {
+            "type": "string"
+          },
+          "principal": {
+            "type": "string",
+            "pattern": "^(operator|team|run):[A-Za-z0-9._-]{1,64}$"
+          },
+          "framework_principal": {
+            "type": "string"
+          },
+          "stores": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskData"
+            }
+          },
+          "progress": {
+            "$ref": "#/components/schemas/TaskProgress"
+          },
+          "finish": {
+            "$ref": "#/components/schemas/FinishStatus"
+          }
+        },
+        "additionalProperties": true
+      },
+      "Task": {
+        "type": "object",
+        "required": ["name", "task_id", "framework_id", "node_id", "state"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          "framework_id": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          "node_id": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string"
+              }
+            }
+          },
+          "state": {
+            "type": "string"
+          },
+          "principal": {
+            "type": "string",
+            "pattern": "^(operator|team|run):[A-Za-z0-9._-]{1,64}$"
+          },
+          "framework_principal": {
+            "type": "string"
+          },
+          "progress_policy": {
+            "$ref": "#/components/schemas/ProgressPolicy"
+          },
+          "observers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskObserver"
+            }
+          },
+          "finish": {
+            "$ref": "#/components/schemas/TaskFinish"
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskStatus"
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "NodeCall": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["GET_HEALTH", "GET_FLAGS", "GET_VERSION", "GET_METRICS", "GET_LOGGING_LEVEL", "SET_LOGGING_LEVEL", "LIST_FILES", "READ_FILE", "GET_STATE", "GET_CONTAINERS", "GET_FRAMEWORKS", "GET_EXECUTORS", "GET_OPERATIONS", "GET_TASKS", "GET_NODE", "GET_RESOURCE_PROVIDERS", "LAUNCH_NESTED_CONTAINER", "WAIT_NESTED_CONTAINER", "KILL_NESTED_CONTAINER", "REMOVE_NESTED_CONTAINER", "LAUNCH_NESTED_CONTAINER_SESSION", "ATTACH_CONTAINER_INPUT", "ATTACH_CONTAINER_OUTPUT", "LAUNCH_CONTAINER", "WAIT_CONTAINER", "KILL_CONTAINER", "REMOVE_CONTAINER", "ADD_RESOURCE_PROVIDER_CONFIG", "UPDATE_RESOURCE_PROVIDER_CONFIG", "REMOVE_RESOURCE_PROVIDER_CONFIG", "MARK_RESOURCE_PROVIDER_GONE", "PRUNE_IMAGES"]
+          }
+        },
+        "additionalProperties": true,
+        "description": "Placeholder schema for medios.v1.node.Call. This follows ProtoJSON field naming; detailed generated schemas will replace it in a later phase."
+      },
+      "NodeResponse": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["GET_HEALTH", "GET_FLAGS", "GET_VERSION", "GET_METRICS", "GET_LOGGING_LEVEL", "LIST_FILES", "READ_FILE", "GET_STATE", "GET_CONTAINERS", "GET_FRAMEWORKS", "GET_EXECUTORS", "GET_OPERATIONS", "GET_TASKS", "GET_NODE", "GET_RESOURCE_PROVIDERS", "WAIT_NESTED_CONTAINER", "WAIT_CONTAINER"]
+          },
+          "get_tasks": {
+            "type": "object",
+            "properties": {
+              "pending_tasks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              },
+              "queued_tasks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              },
+              "launched_tasks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              },
+              "terminated_tasks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              },
+              "completed_tasks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "ExecutorCall": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["SUBSCRIBE", "UPDATE", "MESSAGE", "HEARTBEAT"]
+          },
+          "update": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "$ref": "#/components/schemas/TaskStatus"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true,
+        "description": "Placeholder schema for medios.v1.executor.Call. Detailed generated schemas will replace it in a later phase."
+      },
+      "ExecutorEvent": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["SUBSCRIBED", "LAUNCH", "LAUNCH_GROUP", "KILL", "ACKNOWLEDGED", "MESSAGE", "ERROR", "SHUTDOWN", "HEARTBEAT"]
+          },
+          "launch": {
+            "type": "object",
+            "properties": {
+              "task": {
+                "$ref": "#/components/schemas/TaskInfo"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "ResourceProviderCall": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["SUBSCRIBE", "UPDATE_OPERATION_STATUS", "UPDATE_STATE", "UPDATE_PUBLISH_RESOURCES_STATUS"]
+          }
+        },
+        "additionalProperties": true,
+        "description": "Placeholder schema for medios.v1.resource_provider.Call. Detailed generated schemas will replace it in a later phase."
+      },
+      "ResourceProviderEvent": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["SUBSCRIBED", "APPLY_OPERATION", "PUBLISH_RESOURCES", "ACKNOWLEDGE_OPERATION_STATUS", "RECONCILE_OPERATIONS", "TEARDOWN"]
+          }
+        },
+        "additionalProperties": true
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  }
+}

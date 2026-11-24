@@ -1,0 +1,63 @@
+# Pre-commit hooks for medios.
+#
+# Install:   pip install pre-commit && pre-commit install
+# Run once:  pre-commit run --all-files
+#
+# Hooks gate `git commit` locally. Same checks should run in CI.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+
+  # clang-tidy hook: WIRED BUT DISABLED until macOS env tuning lands.
+  # When activated, requires (one-time per clone):
+  #   brew install llvm
+  #   ln -sf /opt/homebrew/opt/llvm/bin/clang-tidy /opt/homebrew/bin/clang-tidy
+  #   cmake -B build -G Ninja -DMEDIOS_BUILD_TESTS=ON   (generates compile_commands.json)
+  # TODO: add --extra-arg=-isysroot$(xcrun --show-sdk-path) so Homebrew
+  # clang can resolve Apple SDK system headers, then re-enable here.
+  # The check set lives in .clang-tidy at the repo root.
+  # - repo: https://github.com/pocc/pre-commit-hooks
+  #   rev: v1.3.5
+  #   hooks:
+  #     - id: clang-tidy
+  #       args: ['-p=build', '--quiet']
+  #       types_or: [c++, c]
+  #       exclude: '^(build/|_deps/|cmake/|.*\.cmake$)'
+
+  # Style §1.1 / §1.2: forbid upstream-Mesos vocabulary in new code.
+  # Diff-only check via grep against staged changes.
+  - repo: local
+    hooks:
+      - id: forbid-mesos-vocab
+        name: forbid upstream-Mesos vocabulary (STYLE §1.1, §1.2)
+        entry: bash
+        language: system
+        types_or: [c++, c]
+        exclude: '^(build/|_deps/|3rdparty/|tests/api_tests\.cpp)'
+        args:
+          - -c
+          - |
+            files=("$@")
+            shift
+            bad=0
+            for f in "${files[@]}"; do
+              # Look at lines being added in the staged diff only. URLs are
+              # blanked first: a path segment such as /blob/master/ in a
+              # vendor link is not upstream vocabulary, and a file move
+              # re-adds every line, so one such link blocks a whole commit.
+              added=$(git diff --cached -U0 -- "$f" | grep -E '^\+[^+]' \
+                      | sed -E 's#[a-z]+://[^[:space:]"'"'"')>]+##g' || true)
+              if echo "$added" | grep -nE '\b(slave|master|mesos[A-Z_])\b' >/dev/null; then
+                echo "$f: forbidden upstream vocab in added lines (STYLE §1.1)"
+                bad=1
+              fi
+            done
+            exit $bad
+          - "--"

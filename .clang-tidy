@@ -1,0 +1,28 @@
+---
+# Starter rule set for medios. Conservative — high-signal checks only.
+# Add categories as the codebase tolerates them.
+#
+# WarningsAsErrors is empty so hook failures are advisory at first.
+# Promote to errors once the existing tree is clean.
+Checks: >
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-unchecked-optional-access,
+  performance-*,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-equals-default,
+  modernize-use-equals-delete,
+  modernize-use-using,
+  modernize-redundant-void-arg,
+  readability-misleading-indentation,
+  readability-redundant-string-cstr,
+  readability-redundant-string-init,
+  readability-static-definition-in-anonymous-namespace,
+  readability-non-const-parameter,
+  cppcoreguidelines-pro-type-static-cast-downcast,
+  cppcoreguidelines-slicing
+WarningsAsErrors: ''
+HeaderFilterRegex: '^(src|tests)/.*\.(h|hpp)$'
+FormatStyle: none

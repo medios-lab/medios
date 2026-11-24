@@ -1,0 +1,101 @@
+# CMake configure verification.
+#
+# Trigger model: schedule (once per day) + manual dispatch. No push or
+# pull_request trigger; build-test.yml builds and tests pull requests.
+#
+# Runner model: ubuntu-latest (2 vCPU / 7 GB — sufficient for cmake
+# configure with -DMEDIOS_BUILD_TESTS=OFF, which never compiles). The job
+# does not build or run tests; build-test.yml does.
+#
+# Per BUILD-009 (#73): vendored FetchContent dep fetches are cached.
+# Per BUILD-008 (#72): SHA pinning makes the cache key deterministic.
+# Per DR-020 (#35): Linux-only, no Windows matrix.
+
+name: CMake configure
+
+on:
+  schedule:
+    # 08:00 UTC daily = 01:00 PT / 04:00 ET. Runs in low-traffic window.
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  configure:
+    name: ${{ matrix.cpp_compiler }} / cmake -B build -G Ninja
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        cpp_compiler: [g++, clang++]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate OpenAPI JSON specifications
+        run: |
+          python3 -c '
+          import json, pathlib
+
+          for path in ("api/openapi/controller.openapi.json", "api/openapi/node.openapi.json"):
+              raw = pathlib.Path(path).read_text(encoding="utf-8")
+              assert ")openapijson" not in raw, f"{path}: contains raw string delimiter"
+              doc = json.loads(raw)
+              assert str(doc.get("openapi", "")).startswith("3."), f"{path}: invalid openapi version"
+              assert isinstance(doc.get("info"), dict) and doc["info"].get("title"), f"{path}: missing info"
+              assert isinstance(doc.get("paths"), dict) and doc["paths"], f"{path}: empty paths"
+              op_ids = set()
+
+              def walk(node):
+                  if isinstance(node, dict):
+                      ref = node.get("$ref")
+                      if isinstance(ref, str) and ref.startswith("#/"):
+                          target = doc
+                          for part in ref[2:].split("/"):
+                              part = part.replace("~1", "/").replace("~0", "~")
+                              assert isinstance(target, dict) and part in target, f"{path}: broken $ref {ref}"
+                              target = target[part]
+                      op_id = node.get("operationId")
+                      if isinstance(op_id, str):
+                          assert op_id not in op_ids, f"{path}: duplicate operationId {op_id}"
+                          op_ids.add(op_id)
+                      for v in node.values():
+                          walk(v)
+                  elif isinstance(node, list):
+                      for item in node:
+                          walk(item)
+
+              walk(doc)
+
+          cfg = json.loads(pathlib.Path("api/openapi/swagger-config.json").read_text(encoding="utf-8"))
+          assert isinstance(cfg.get("urls"), list) and len(cfg["urls"]) == 2
+          '
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            ninja-build \
+            libssl-dev
+
+      - name: Restore FetchContent dep cache
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: ${{ runner.os }}-${{ matrix.cpp_compiler }}-deps-${{ hashFiles('cmake/Dependencies.cmake', 'cmake/patches/**') }}
+
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }} \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DMEDIOS_BUILD_TESTS=OFF

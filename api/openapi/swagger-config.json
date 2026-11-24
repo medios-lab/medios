@@ -1,0 +1,12 @@
+{
+  "urls": [
+    {
+      "name": "Medios Controller API",
+      "url": "controller.openapi.json"
+    },
+    {
+      "name": "Medios Node API",
+      "url": "node.openapi.json"
+    }
+  ]
+}

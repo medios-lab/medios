@@ -1,0 +1,170 @@
+# Gang placement under a greedy allocator: feasibility cliff and the anchor heuristic
+
+*medios research track — 2026-06-09. Companion to [offers.md](offers.md);
+experiment tracked as #316 (private history).
+Simulation source: `tests/sim_gang_placement.cpp`.*
+
+## Abstract
+
+A gang reservation is feasible only if all members place jointly, so
+feasibility is a conjunction over members and the architecture question for
+medios is whether a greedy allocator can carry gangs, or whether they force
+global coordination. We test this in a spatial-only placement simulation: no
+time dimension, no medios code, synthetic clusters of labeled nodes under
+packed background load. Three placement strategies run on identical
+scenarios: in-order first-fit (naive), most-constrained-first with
+backtracking only on the most constrained member (anchor), and a
+best-fit-decreasing reference (bfd) validated as exactly deciding
+feasibility on this demand mix by exhaustive search over 5,000 small
+instances. Results: the multiplicative feasibility cliff is real — naive
+feasibility falls from 1.0 to 0.49 between gang sizes 8 and 64 at 50%
+utilization with capacity to spare. The anchor strategy matches the exact
+reference in 71 of 72 sweep cells to four decimals (one divergent trial in
+144,000), so greedy placement with the right ordering does not approximate
+the feasibility frontier — it sits on it. Constraint correlation between
+members steepens the cliff and widens the gap over naive. One claim is
+refuted as stated: anchoring does not cut placement effort under honest
+accounting; its feasibility-set precomputation costs about six times
+naive's node examinations, while bfd achieves the same feasibility with
+neither precomputation nor backtracking. The decision the experiment was
+built to make: medios can extend the greedy bin-packer for gangs; ordering,
+not global search, is the missing ingredient.
+
+## 1. Hypothesis
+
+From [offers.md](offers.md): gang feasibility is a conjunction over members
+dominated by the member with the smallest feasible set. Three testable
+claims:
+
+- **H1 (cliff).** Joint feasibility decays multiplicatively in gang size N,
+  even when aggregate capacity is plentiful. The member count itself is a
+  feasibility cliff.
+- **H2 (anchor).** Placing the smallest-feasible-set member first and
+  backtracking only on it keeps a greedy allocator near the optimal
+  feasibility frontier and reduces placement effort.
+- **H3 (predictor).** The size of the smallest feasible set at scenario
+  start predicts the outcome.
+
+The refutation criteria fixed in advance: anchor ≈ naive would mean gangs
+need global coordination; no cliff would mean the fragility argument is
+overstated.
+
+## 2. Experiment
+
+**Model.** M=100 nodes, 8 slots each, one binary topology label (gpu type,
+50/50). A gang member demands d ∈ {1,2,4,8} slots (uniform) on a single
+node with matching label. Background load is itself a packed workload:
+tasks with the same size mix placed first-fit in random node order until
+target utilization U is reached. Gang members optionally correlate: with
+probability ρ a member requires the gang's home type instead of an
+independent draw, parameterizing the independence assumption behind the
+0.9^N argument (ρ=0 independent, ρ=1 whole gang in contention for one node
+population).
+
+**Strategies**, paired on identical scenarios with a fixed seed:
+
+- *naive* — members in arrival order, first-fit over nodes in index order,
+  fail on the first stuck member.
+- *anchor* — members ordered by feasible-set size ascending; the most
+  constrained member is the only backtrack point and is retried across its
+  feasible nodes; the rest place greedily.
+- *bfd* — best-fit-decreasing by demand, no backtracking; the reference.
+  The demand sizes are divisible (1|2|4|8), for which best-fit-decreasing
+  is expected to decide feasibility exactly; rather than assume the
+  theorem, `--selfcheck` compares bfd against exhaustive search on 5,000
+  random small instances: zero mismatches.
+
+**Methodological note.** The first background-load model (per-slot binomial
+occupancy) degenerated the experiment: it leaves almost no fully free
+nodes at any utilization, so every whole-node member was infeasible at
+scenario start and no ordering could matter. The packed-workload model was
+adopted because failures under it are caused by competition and
+fragmentation — the thing under test — rather than by an artifact of the
+load generator.
+
+**Sweep.** N ∈ {2,4,8,16,24,32,48,64} × U ∈ {0.50,0.70,0.85} ×
+ρ ∈ {0,0.5,1}, 2,000 trials per cell. Reproduce with:
+`./sim_gang_placement --trials 2000 --seed 42`.
+
+## 3. Results
+
+Feasibility rate at U=0.50, ρ=0 (independent members):
+
+| N | naive | anchor | bfd (exact) |
+|---|---|---|---|
+| 8 | 1.000 | 1.000 | 1.000 |
+| 16 | 0.998 | 0.998 | 0.998 |
+| 32 | 0.954 | 0.968 | 0.968 |
+| 48 | 0.788 | 0.830 | 0.830 |
+| 64 | 0.488 | 0.596 | 0.596 |
+
+Effect of member correlation at N=48, U=0.50:
+
+| ρ | naive | anchor | bfd (exact) |
+|---|---|---|---|
+| 0 | 0.788 | 0.830 | 0.830 |
+| 0.5 | 0.626 | 0.712 | 0.712 |
+| 1 | 0.251 | 0.375 | 0.375 |
+
+- **H1 confirmed.** The cliff is multiplicative and appears while aggregate
+  capacity is ample (at N=64, U=0.50 the gang demands ~240 of ~400 free
+  slots and naive still fails half the time). Higher utilization pulls the
+  cliff to smaller N; at U=0.85 feasibility is starvation-dominated
+  (members with empty feasible sets), where no ordering helps.
+- **H2 confirmed on feasibility, refuted on effort.** Anchor equals the
+  exact reference in every cell except one divergent trial in 144,000
+  (N=64, ρ=1: 0.0595 vs 0.0600). Greedy with most-constrained-first
+  ordering is not approximately good — it is indistinguishable from
+  optimal in this model. On effort the claim inverts: anchor examines ~6×
+  more nodes than fail-fast naive because the feasible-set ranking costs
+  N×M examinations up front. bfd reaches the same feasibility with no
+  precomputation and zero backtracks.
+- **H3 partially confirmed.** Mean smallest-feasible-set size separates
+  successes from failures in every cell (e.g. 9.5 vs 7.6 at N=64, U=0.50),
+  but the separation narrows as N grows; it is a useful signal, not a
+  sharp threshold.
+- **Correlation steepens the cliff and widens the anchor advantage** (at
+  N=48, ρ=1 the relative gain over naive is ~50%). The independence
+  assumption in the 0.9^N argument is optimistic; real gangs that compete
+  for one resource population are more fragile than the independent model
+  predicts, and ordering matters more for them, not less.
+
+**Why anchor collapses onto bfd here.** With a single label axis,
+feasible-set size is nearly monotone in demand, so "smallest feasible set
+first" and "largest demand first" induce the same order. The model cannot
+yet distinguish the anchor heuristic from plain demand ordering. They
+separate only under multi-axis constraints (e.g. rack × type), where a
+small demand can still have a small feasible set.
+
+**Threats to validity.** One label axis and two values; single-node
+members only (no member spanning); demand sizes divisible, which both
+makes bfd exact and flatters all packers; M=100 fixed; no time dimension
+by design. The result decides the v0 question only.
+
+## 4. Conclusion
+
+The decision criterion is met. Gang placement does not need global
+coordination in the spatial regime: a greedy allocator with
+most-constrained-first ordering sits on the exact feasibility frontier,
+and even the cheap demand-descending variant does. The cliff is real,
+correlation makes it worse, and the practical content of
+"anchor-on-the-bottleneck" at this stage is an ordering rule, not a search
+procedure. This supports extending the existing medios bin-packer for
+gang reservations and keeping placement policy negotiable by frameworks
+(FAC3-0014), rather than adopting a solver.
+
+## 5. Next steps
+
+1. **Separate anchor from demand ordering (v0.5).** Add a second
+   constraint axis (rack × type) so feasible-set size and demand decouple;
+   measure whether anchor's advantage over bfd appears where the theory
+   says it must.
+2. **Interval dimension (v1).** Node calendars and member windows: test
+   the placement-cost vs calendar-cost split and the "longest window
+   fragments compaction" claim from offers.md.
+3. **Non-divisible demands.** Break the divisibility property and measure
+   how far bfd and anchor fall from exhaustive feasibility; bounds the
+   optimism of this model.
+4. **medios integration (v2).** Only after v1: gang offers through the
+   real allocator, composing with the reservation primitive verified in
+   [reservation-mvp.md](reservation-mvp.md).

@@ -1,0 +1,58 @@
+# Networked controller + node for end-to-end dev iteration on Docker-on-Mac.
+# Per BUILD-005 (#55) and DR-003 (#4).
+#
+# Both services share the build environment image (Dockerfile in this dir)
+# and the host workspace mount, so a single host-side build produces the
+# binaries both services run.
+#
+# Usage:
+#   docker compose build           # builds the dev image once
+#   docker compose up controller   # foreground controller for log watching
+#   docker compose up              # both services, networked
+#   docker compose down            # tear down
+#
+# Caveat: per DR-003, cgroups inside Docker-on-Mac (Linux VM inside macOS)
+# are lossy. Sufficient to prove the API loop end-to-end; production-fidelity
+# isolation testing needs a real Linux host.
+
+services:
+  controller:
+    build: .
+    image: medios-dev:latest
+    container_name: medios-controller
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    ports:
+      - "5050:5050"
+    command: >
+      ./build/src/controller/medios-controller
+      --ip=0.0.0.0
+      --port=5050
+      --registry=in_memory
+      --work_dir=/tmp/medios-controller
+
+  node:
+    build: .
+    image: medios-dev:latest
+    container_name: medios-node
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    ports:
+      - "5051:5051"
+    depends_on:
+      - controller
+    # A STORE volume needs --launcher=linux --isolation=filesystem/linux (a
+    # privileged container): the posix launcher has no mount namespace to
+    # bind a store in, so this node refuses a --stores file and a store task.
+    command: >
+      ./build/src/node/medios-node
+      --controller=controller:5050
+      --ip=0.0.0.0
+      --port=5051
+      --work_dir=/tmp/medios-node
+      --containerizers=medios
+      --launcher=posix
+      --isolation=
+      --resources=cpus:2;mem:1024;disk:1024

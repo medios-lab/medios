@@ -1,0 +1,169 @@
+# Build and test on a GitHub-hosted runner.
+#
+# Trigger: pull requests and pushes to master. The job is skipped while
+# the repository is private, so the build does not draw on the private
+# Actions minute quota; it runs once the repository is public.
+#
+# Build steps follow release-amd64.yml (disk reclaim, swap, dep cache) and
+# the configuration cmake-configure.yml checks, with tests on and ccache
+# kept across runs through actions/cache.
+
+name: Build and test
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-test:
+    name: g++ / cmake build + ctest (ubuntu-latest)
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    # Observation (release-amd64.yml, runs 37009949882 and 37017201503):
+    # a tests-off RelWithDebInfo build on a 2 vCPU / 7 GB GitHub-hosted
+    # runner takes 60 to 90 min at -j2. This job also compiles the tests
+    # and runs ctest, neither of which has been timed on a hosted runner.
+    # 240 min is about 2.7x the observed 90 min upper bound, to absorb the
+    # extra objects and the test run on a cold ccache. Default: revisit
+    # from the durations the first public runs record.
+    timeout-minutes: 240
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate OpenAPI JSON specifications
+        run: |
+          python3 -c '
+          import json, pathlib
+
+          for path in ("api/openapi/controller.openapi.json", "api/openapi/node.openapi.json"):
+              raw = pathlib.Path(path).read_text(encoding="utf-8")
+              assert ")openapijson" not in raw, f"{path}: contains raw string delimiter"
+              doc = json.loads(raw)
+              assert str(doc.get("openapi", "")).startswith("3."), f"{path}: invalid openapi version"
+              assert isinstance(doc.get("info"), dict) and doc["info"].get("title"), f"{path}: missing info"
+              assert isinstance(doc.get("paths"), dict) and doc["paths"], f"{path}: empty paths"
+              op_ids = set()
+
+              def walk(node):
+                  if isinstance(node, dict):
+                      ref = node.get("$ref")
+                      if isinstance(ref, str) and ref.startswith("#/"):
+                          target = doc
+                          for part in ref[2:].split("/"):
+                              part = part.replace("~1", "/").replace("~0", "~")
+                              assert isinstance(target, dict) and part in target, f"{path}: broken $ref {ref}"
+                              target = target[part]
+                      op_id = node.get("operationId")
+                      if isinstance(op_id, str):
+                          assert op_id not in op_ids, f"{path}: duplicate operationId {op_id}"
+                          op_ids.add(op_id)
+                      for v in node.values():
+                          walk(v)
+                  elif isinstance(node, list):
+                      for item in node:
+                          walk(item)
+
+              walk(doc)
+
+          cfg = json.loads(pathlib.Path("api/openapi/swagger-config.json").read_text(encoding="utf-8"))
+          assert isinstance(cfg.get("urls"), list) and len(cfg["urls"]) == 2
+          '
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build g++ ccache git ca-certificates \
+            pkg-config libssl-dev
+          cmake --version | head -1
+          g++ --version | head -1
+
+      # Same reclaim as release-amd64.yml: the image leaves about 14 GB
+      # free, which a debug-info build tree overran there.
+      - name: Reclaim disk from unused toolchains
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          df -h /
+
+      # Same swap as release-amd64.yml: one cc1plus reached 3.6 GB on the
+      # controller's largest units there.
+      - name: Add swap for the build
+        run: |
+          sudo fallocate -l 4G /medios-swap
+          sudo chmod 600 /medios-swap
+          sudo mkswap /medios-swap > /dev/null
+          sudo swapon /medios-swap
+          free -g
+
+      - name: Restore FetchContent dep cache
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/_deps
+          key: ${{ runner.os }}-g++-test-deps-${{ hashFiles('cmake/Dependencies.cmake', 'cmake/patches/**') }}
+
+      # Append-only: each run saves under its own run id and restore takes
+      # the most recent entry by prefix.
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-g++-ccache-${{ hashFiles('cmake/Dependencies.cmake', 'cmake/patches/**') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-g++-ccache-${{ hashFiles('cmake/Dependencies.cmake', 'cmake/patches/**') }}-
+            ${{ runner.os }}-g++-ccache-
+
+      - name: Configure
+        run: |
+          ccache --max-size=5G
+          ccache --zero-stats
+          cmake -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DMEDIOS_BUILD_TESTS=ON
+
+      # Parallelism heuristic: one compile per core, capped at one per
+      # 4 GB of RAM plus swap, because a single cc1plus was observed at
+      # 3.6 GB (release-amd64.yml). The effective value is printed.
+      - name: Build
+        run: |
+          mem_gb=$(free -g | awk 'NR==2{m=$2} NR==3{s=$2} END{print m+s}')
+          jobs=$(( mem_gb / 4 ))
+          if [ "$jobs" -gt "$(nproc)" ]; then jobs=$(nproc); fi
+          if [ "$jobs" -lt 1 ]; then jobs=1; fi
+          echo "nproc=$(nproc) mem+swap=${mem_gb}G jobs=$jobs"
+          cmake --build build -j "$jobs"
+
+      - name: Print ccache stats
+        if: always()
+        run: ccache --show-stats || true
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Save FetchContent dep cache (even on failure)
+        if: always() && steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/_deps
+          key: ${{ runner.os }}-g++-test-deps-${{ hashFiles('cmake/Dependencies.cmake', 'cmake/patches/**') }}
+
+      - name: Save ccache (even on failure)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-g++-ccache-${{ hashFiles('cmake/Dependencies.cmake', 'cmake/patches/**') }}-${{ github.run_id }}

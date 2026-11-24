@@ -1,0 +1,276 @@
+# linux/amd64 release artifact.
+#
+# Builds medios on a GitHub-hosted x86-64 runner with the node release
+# configuration (RelWithDebInfo, tests off, NVML on), installs it through the DR-033
+# relocatable layout (`cmake --install`, rpaths rewritten to $ORIGIN) and
+# packages <prefix>/bin + <prefix>/lib as
+#
+#   medios-<full sha>-linux-amd64.tar.gz        one top-level directory,
+#                                               medios-<sha>-linux-amd64/,
+#                                               holding bin/, lib/ and
+#                                               medios-build.json
+#   medios-<full sha>-linux-amd64.tar.gz.sha256 `sha256sum -c` format
+#
+# medios-build.json carries the effective build configuration so a GPU node
+# can check NVML was compiled in without a build tree to read.
+#
+# Trigger: manual dispatch of any ref only (uploaded to a named release when
+# one is given, otherwise kept only as a workflow artifact). Publishing a
+# release does not start it, and nothing here runs on pull_request or
+# push.
+
+name: Release linux/amd64
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or sha to build
+        required: true
+        default: master
+      release_tag:
+        description: >-
+          Existing release to upload the asset to. Empty keeps the tarball as
+          a workflow artifact only (a probe build).
+        required: false
+        default: ""
+      runs_on:
+        description: >-
+          Runner label. ubuntu-24.04 is the free standard runner; the job's
+          comments record its observed build time. A self-hosted x86-64
+          label with more cores is the faster path.
+        required: false
+        default: ubuntu-24.04
+
+permissions:
+  contents: write
+
+# One build per ref at a time, queued rather than cancelled: a release
+# build that is 30 minutes in is worth more than starting the next one
+# early, and a cancelled build leaves no artifact to read.
+concurrency:
+  group: release-amd64-${{ inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build + package (ubuntu-24.04, x86-64)
+    # ubuntu-24.04 is the default target OS for the amd64 artifact, so it
+    # links against that release's glibc and libstdc++, and its apt carries
+    # the cmake >= 3.28 medios requires and libnvidia-ml-dev. Observed
+    # 2026-10-02 (run 37017201503) on the standard runner of a private
+    # repository: 2 vCPU, 7 GB, one 72 GB disk with 14 GB free, 3 GB swap.
+    # A dispatch can name another label.
+    runs-on: ${{ inputs.runs_on || 'ubuntu-24.04' }}
+    # Observed: 21 min at -j8 on an 8 vCPU cloud VM, 310 s at -j28 on a
+    # 30 vCPU cloud VM, and on the 2 vCPU runner 63 min to object 1009 of
+    # 1112 at -j4 while swapping (run 37009949882).
+    # Compile-bound on 2 cores, 60 to 90 min is expected; 180 bounds a stall
+    # at twice that. Revisit from the durations the runs record.
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          # A full clone: the configure step reads git for the version
+          # string, and the sha in the artifact name is resolved here.
+          fetch-depth: 0
+
+      - name: Resolve the commit being built
+        id: sha
+        run: |
+          sha=$(git rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "name=medios-$sha-linux-amd64" >> "$GITHUB_OUTPUT"
+          echo "building $sha from ${{ inputs.ref || github.ref }}"
+
+      # The build prerequisites for a node build, plus
+      # patchelf (the DR-033 install layer rewrites rpaths with it) and the
+      # NVML header package (multiverse; the driver itself is not needed to
+      # compile the wrapper, which dlopens libnvidia-ml at runtime).
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build g++ git ca-certificates pkg-config \
+            patchelf libnvidia-ml-dev libssl-dev
+          cmake --version | head -1
+          g++ --version | head -1
+
+      # Disk. The image ships 59 GB of toolchains this build never touches
+      # and leaves 14 GB, which the debug-info build tree plus the swap below
+      # overran (run 37009949882: "No space left on device" at object 1009).
+      # Removing the Android SDK, .NET, Haskell, CodeQL and the preloaded
+      # docker images frees about 25 GB in under a minute.
+      - name: Reclaim disk from unused toolchains
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          df -h /
+
+      # The vendored FetchContent sources and their compiled outputs, keyed
+      # the way cmake-configure.yml keys them. A dep bump changes the key.
+      # Saved at the end even when the build fails: the deps are the first
+      # 700 of 1112 objects, and a failed run that leaves them behind makes
+      # the next one shorter.
+      - name: Restore FetchContent dep cache
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/_deps
+          key: ubuntu-24.04-g++-release-deps-${{ hashFiles('cmake/Dependencies.cmake') }}
+
+      # The node release configuration: RelWithDebInfo
+      # so a crash on a node is diagnosed from its core, tests off because a
+      # node is not a test host, NVML on because every GPU node needs the
+      # wrapper compiled in and a stub advertises devices it cannot grant
+      # (medios#453). No ccache: a release build has nothing to share with
+      # a previous run.
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DMEDIOS_BUILD_TESTS=OFF \
+            -DMEDIOS_ENABLE_NVML=ON \
+            | tee configure.log
+          grep -q 'NVML: enabled' configure.log || {
+            echo 'configure did not report "NVML: enabled"; refusing to ship a stub'
+            exit 1
+          }
+
+      # Memory. Observed on this runner (run 37009949882, the sampler below):
+      # one cc1plus reaches 3.6 GB on the controller's largest units, and at
+      # -j4 the build was killed with SIGTERM twice at those units (runs
+      # 37004053439, 37007101131) and needed 5.6 GB of swap on the third.
+      # At -j2 the peak is two such compiles, about 7.2 GB against 7 GB; 4 GB
+      # on top of the image's 3 GB covers that peak without taking the disk
+      # the build tree needs.
+      - name: Add swap for the build
+        run: |
+          sudo fallocate -l 4G /medios-swap
+          sudo chmod 600 /medios-swap
+          sudo mkswap /medios-swap > /dev/null
+          sudo swapon /medios-swap
+          free -g
+
+      - name: Build
+        # -j2: the runner's core count. medios#179 found the build
+        # compile-bound; there is nothing to gain above it, and the memory
+        # note above is what going above it cost. The sampler writes memory
+        # and disk use every 15 s to mem.log for the step after this one;
+        # it never fails the build.
+        run: |
+          ( while true; do
+              echo "$(date -u +%H:%M:%S) $(free -m | awk 'NR==2{printf "used=%sM avail=%sM", $3, $7} NR==3{printf " swap_used=%sM", $3}') top_cc1plus_rss=$(ps -eo rss,comm --sort=-rss | awk '$2=="cc1plus"{print int($1/1024)"M"; exit}') disk_avail=$(df -m / | awk 'NR==2{print $4"M"}')"
+              sleep 15
+            done ) > mem.log 2>&1 &
+          sampler=$!
+          cmake --build build -j 2
+          rc=$?
+          kill $sampler 2>/dev/null
+          exit $rc
+
+      - name: Memory and disk during the build
+        if: always()
+        run: |
+          echo "samples: $(wc -l < mem.log)"
+          echo "peak used:      $(grep -o 'used=[0-9]*' mem.log | cut -d= -f2 | sort -n | tail -1) MB"
+          echo "min avail:      $(grep -o 'avail=[0-9]*' mem.log | cut -d= -f2 | sort -n | head -1) MB"
+          echo "peak swap used: $(grep -o 'swap_used=[0-9]*' mem.log | cut -d= -f2 | sort -n | tail -1) MB"
+          echo "peak cc1plus:   $(grep -o 'top_cc1plus_rss=[0-9]*' mem.log | cut -d= -f2 | sort -n | tail -1) MB"
+          echo "min disk avail: $(grep -o 'disk_avail=[0-9]*' mem.log | cut -d= -f2 | sort -n | head -1) MB"
+          du -sh build build/_deps 2>/dev/null || true
+
+      - name: Save FetchContent dep cache (even on failure)
+        if: always() && steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/_deps
+          key: ubuntu-24.04-g++-release-deps-${{ hashFiles('cmake/Dependencies.cmake') }}
+
+      # The relative prefix is safe: the root CMakeLists.txt install block
+      # absolutizes CMAKE_INSTALL_PREFIX before deriving bin/ and lib/.
+      - name: Install into a relocatable stage
+        run: |
+          cmake --install build --prefix "stage/${{ steps.sha.outputs.name }}"
+          ls "stage/${{ steps.sha.outputs.name }}/bin"
+          ls "stage/${{ steps.sha.outputs.name }}/lib" | wc -l
+
+      # What ran, with which effective parameters, on what software. A GPU
+      # node's installer can read nvml from here in place of the
+      # CMakeCache.txt of a host that built its own tree.
+      - name: Write build provenance
+        run: |
+          cat > "stage/${{ steps.sha.outputs.name }}/medios-build.json" <<EOF
+          {
+            "sha": "${{ steps.sha.outputs.sha }}",
+            "ref": "${{ inputs.ref || github.ref }}",
+            "os": "linux",
+            "arch": "amd64",
+            "cmake_build_type": "RelWithDebInfo",
+            "medios_build_tests": false,
+            "medios_enable_nvml": true,
+            "compiler": "$(g++ --version | head -1)",
+            "cmake": "$(cmake --version | head -1)",
+            "runner": "${{ inputs.runs_on || 'ubuntu-24.04' }}",
+            "cores": "$(nproc)",
+            "memory": "$(free -g | awk 'NR==2{print $2" GB"}')",
+            "jobs": "2",
+            "workflow_run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          cat "stage/${{ steps.sha.outputs.name }}/medios-build.json"
+
+      # The stage must run on its own: every binary a node install requires
+      # is present, the module library is present, and the loader resolves
+      # every library from the stage's lib/ with no build tree in sight.
+      - name: Verify the stage is relocatable
+        run: |
+          set -e
+          prefix="stage/${{ steps.sha.outputs.name }}"
+          for b in medios-controller medios-node medios-fetcher medios-execute \
+                   medios-executor medios-containerizer medios-docker-executor \
+                   medios-io-switchboard; do
+            test -x "$prefix/bin/$b" || { echo "missing $prefix/bin/$b"; exit 1; }
+          done
+          test -f "$prefix/lib/libmedios_gpu.so" || { echo "missing libmedios_gpu.so"; exit 1; }
+          mv build build.moved
+          if ldd "$prefix/bin/medios-node" | grep -E 'not found|build\.moved'; then
+            echo 'medios-node resolves a library outside the stage'; exit 1
+          fi
+          "$prefix/bin/medios-node" --version
+          mv build.moved build
+
+      - name: Package
+        id: pkg
+        run: |
+          name="${{ steps.sha.outputs.name }}"
+          tar -C stage -czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          cat "$name.tar.gz.sha256"
+          ls -l "$name.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.sha.outputs.name }}
+          path: |
+            ${{ steps.sha.outputs.name }}.tar.gz
+            ${{ steps.sha.outputs.name }}.tar.gz.sha256
+          if-no-files-found: error
+          # Long enough to install from while a release is being decided;
+          # a release asset is the durable copy.
+          retention-days: 30
+
+      - name: Upload to the release
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          name="${{ steps.sha.outputs.name }}"
+          gh release upload "$TAG" "$name.tar.gz" "$name.tar.gz.sha256" --clobber
+          gh release view "$TAG" --json assets --jq '.assets[].name'

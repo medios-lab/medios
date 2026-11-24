@@ -1,0 +1,219 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1.1in]{geometry}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[hidelinks]{hyperref}
+\usepackage{parskip}
+
+\newcommand{\code}[1]{\texttt{#1}}
+
+\sloppy
+\emergencystretch=3em
+
+\title{Timeless dynamic reservation in medios:\\
+verification of hold-and-release semantics}
+\author{medios research track}
+\date{June 9, 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{center}
+\small Companion to \code{docs/research/offers.md}; experiment tracked as
+medios issue \#317 (private history),
+test landed in \#319 (private history).
+\end{center}
+
+\begin{abstract}
+medios inherits the full dynamic-reservation machinery from Mesos:
+\code{RESERVE} and \code{UNRESERVE} offer operations,
+\code{Resource.ReservationInfo}, allocator-side reservation tracking, and
+operator-API endpoints. Inherited code in a thin fork is present but not
+necessarily functional; large parts of the upstream surface are stubbed, and
+the reservation path had no evidence of ever being exercised in medios. We
+test the claim from \code{offers.md} that a \emph{timeless} reservation ---
+a claim held from now until explicitly released --- is the degenerate case
+of the interval-offer model and should work end-to-end on the machinery
+already in the tree, with no new product code. A two-stage verification (run
+the four inherited reservation tests; add one test for the four properties
+they leave uncovered) confirms the claim: resources reserved for a role
+persist across allocation cycles with no task running, are never offered to
+a framework in another role, are visible in the operator state view, and
+return to the shared pool on release. The full suite passes 603/603. The
+result validates ``reservation as a claimed resource'' at zero product-code
+cost and unblocks the interval lift (lease, expiry, future booking) as a
+pure design question.
+\end{abstract}
+
+\section{Background and hypothesis}
+
+\code{offers.md} models an offer as a resource vector over a time window,
+with the ordinary scalar offer as the degenerate window
+$[t_{\mathrm{now}},\, t_{\mathrm{now}} + \mathrm{offer\_timeout}]$. Under
+that model a reservation does not add a time dimension; it makes the window
+explicit, long, and committed. The minimal reservation is \emph{timeless}:
+the window $[\mathrm{now},\, \mathrm{until\ UNRESERVE})$. At that degenerate
+point the interval invariant
+\begin{equation*}
+\sum \mathrm{active\_reservations}(t) \;\le\; \mathrm{capacity}(t)
+\end{equation*}
+collapses to the static $\mathrm{reserved} + \mathrm{free} =
+\mathrm{capacity}$, which is exactly the reserved-versus-unreserved
+bucketing the hierarchical allocator already enforces
+(\code{RoleTree::trackReservations},
+\code{reservationScalarQuantities\_}, \code{hierarchical.cpp:414-458}). If
+that reading is correct, medios already ships the timeless reservation and
+no allocator work is needed to demonstrate it.
+
+The risk is that the reading is correct about the design but wrong about the
+tree. medios strips or stubs much of upstream Mesos (DR-007, DR-013), and a
+code path can survive a fork as text without surviving as behavior. The same
+session that scoped this experiment found inherited tests that had never run
+under medios. Presence had to be separated from function.
+
+\textbf{Hypothesis.} The dynamic-reservation path in the medios tree is
+functional end-to-end. Specifically, with no task ever launched:
+
+\begin{itemize}
+\item \textbf{H1 (hold).} Resources \code{RESERVE}d for a role persist
+  across allocation cycles as allocator state alone --- they do not decay,
+  leak back to the free pool, or require a running task to stay claimed.
+\item \textbf{H2 (exclusion).} A framework in a different role is never
+  offered the reserved resources, even when the cluster is otherwise idle.
+\item \textbf{H3 (observability).} The held claim is visible to an operator
+  through the controller state view.
+\item \textbf{H4 (release).} \code{UNRESERVE} returns the resources to the
+  unreserved pool, after which a framework in another role receives them.
+\end{itemize}
+
+H1 and H4 together are the hold-and-release contract; H2 is what makes a
+reservation a \emph{claim} rather than a preference; H3 is what makes the
+claim auditable.
+
+\section{Experiment}
+
+\textbf{Design principle.} Smallest probe first. Stage~0 costs one build and
+runs tests that already exist; stage~1 adds a single test and no product
+code. A failure at either stage names the broken component directly.
+
+\textbf{Stage 0 --- do the inherited tests pass?} The tree contains four
+reservation tests (\code{ReserveCreateLaunchDestroyUnreserve} and
+\code{ReserveAndUnreserveResourcesV1}, each parameterized pre/post
+reservation-refinement). They were built and run on the Linux build host at
+master \code{5b0d21dc3} by the build-dispatch agent.
+
+\textbf{Stage 1 --- close the coverage gap.} Reading the four tests shows
+what they do not establish. The framework-path test exercises reserve and
+unreserve only from the reserving framework's own point of view; the
+operator-API test asserts only HTTP~202 on the calls and never checks that
+the reservation took effect. None of H2 or H3 is covered, and H1 is covered
+only incidentally. We added one test,
+\code{ControllerTest.ReservationCrossRoleHoldAndRelease}
+(\code{tests/controller\_tests.cpp}), against an in-process cluster: one
+controller, one node (\code{cpus:8;mem:2048}), and two frameworks --- A in
+role \code{alpha}, B in role \code{beta}. The choreography:
+
+\begin{enumerate}
+\item A receives the full node and applies \code{RESERVE} \code{cpus:4} for
+  \code{alpha} (dynamic reservation, principal matching A's).
+\item A declines its offers for three consecutive allocation cycles,
+  asserting each time that the re-offer still contains the reserved
+  \code{cpus:4} (H1).
+\item The controller \code{/state} endpoint is asserted to report
+  \code{nodes[0].reserved\_resources.alpha.cpus == 4} (H3).
+\item A suppresses; B starts and receives offers. B's offer is asserted to
+  contain only the unreserved remainder (\code{cpus == 4}) and no resource
+  reserved to \code{alpha} (H2).
+\item B suppresses; A revives, receives the still-held reservation, applies
+  \code{UNRESERVE}, and suppresses again.
+\item B revives and is asserted to receive the full node, all unreserved
+  (\code{cpus:8;mem:2048} allocated to \code{beta}); \code{/state} is
+  asserted to show the \code{alpha} reservation gone and
+  \code{unreserved\_resources.cpus == 8} (H4).
+\end{enumerate}
+
+Only one framework is eligible for offers at each step (suppress/revive
+choreography with queue-drain barriers between phases), so every assertion
+is against a deterministic allocation, not a race. The probe uses
+\code{cpus} rather than the issue's \code{gpu:4}: GPU resources are gated
+behind a separate framework capability (\code{GPU\_RESOURCES},
+\code{hierarchical.cpp:3113}) that is orthogonal to reservation semantics,
+and any scalar exercises the same reserve/track/offer/release path.
+
+\section{Results}
+
+All stages pass on the Linux build host (full \code{ctest} suite,
+build-dispatch agent):
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Stage & Test & Result \\
+\midrule
+0 & \code{ReserveCreateLaunchDestroyUnreserve} (pre \& post) & pass, 0.19s each \\
+0 & \code{ReserveAndUnreserveResourcesV1} (pre \& post) & pass, 0.15s each \\
+1 & \code{ReservationCrossRoleHoldAndRelease} (H1--H4) & pass, 0.30s \\
+--- & full suite at \code{ac3ccc7ac} & 603/603 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Secondary findings from the verification:
+
+\begin{itemize}
+\item \textbf{Observability is per-node only.} \code{/state} and
+  \code{GET\_AGENTS} expose reservations on each node, which satisfies H3.
+  The \code{/roles} endpoint does not report reserved-but-unallocated
+  quantities per role, and the allocator's aggregate
+  (\code{reservationScalarQuantities\_}) is not surfaced over HTTP. An
+  operator can see \emph{where} resources are held but has no single
+  cluster-wide reserved-versus-free figure per role.
+\item \textbf{The inherited operator-API test is status-code-only.} It would
+  pass even if \code{RESERVE} were a silent no-op. Stage~1 closes that hole
+  through the framework path; the operator path's effect is still asserted
+  only indirectly.
+\end{itemize}
+
+\textbf{Threats to validity.} One node, one resource shape, scalar resources
+only. The test does not exercise node restart (reservation checkpoint
+recovery), controller failover, reservation refinement under hierarchical
+roles, principal/ACL enforcement matrices, or concurrent reservation
+conflicts. It verifies the contract, not its hardening.
+
+\section{Conclusion}
+
+The hypothesis holds on all four properties. The timeless dynamic
+reservation --- claim held until released, no time dimension --- works
+end-to-end on machinery already in the medios tree, at zero product-code
+cost. This validates the \code{offers.md} framing empirically: the
+reserved/unreserved bucketing is the degenerate interval invariant, and
+medios ships the degenerate reservation today. The fork's ``present but
+possibly stubbed'' risk was real in general but did not materialize on this
+path.
+
+\section{Next steps}
+
+\begin{enumerate}
+\item \textbf{Interval lift (v2).} Lease/expiry (auto-\code{UNRESERVE} at
+  $t_1$) and future booking (reserve from future $t_0$) are now a design
+  exercise on a verified base. Admission against an uncertain future and
+  the reserved-but-could-not-be-honored settlement state (\code{offers.md}
+  open questions) are the substantive design work.
+\item \textbf{Gang feasibility
+  (\#316, private history).} The
+  placement simulation is independent of this result but shares the
+  research goal: keep the allocator greedy. Its v2 stage composes with
+  reservations verified here.
+\item \textbf{Per-role reserved aggregate.} Small observability lift:
+  surface reserved-versus-free per role (the allocator already tracks it).
+  Worth doing when an operator-facing consumer exists; not before.
+\item \textbf{Operator-path effect assertion.} Extend the V1 operator-API
+  test to assert the reservation's effect, not just the 202.
+\item \textbf{SDK surface.} Reservation wire types and a worked example in
+  the Go SDK stay out of scope until the protocol shape (including v2) is
+  settled.
+\end{enumerate}
+
+\end{document}
