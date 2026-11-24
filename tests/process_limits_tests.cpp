@@ -33,8 +33,9 @@ TEST(ProcessLimitsTest, NoLimitsKeepsHostFigures)
 }
 
 
-// The RunPod CPU pod: a 2-CPU affinity mask, no cpu.max quota and a
-// memory.max of 3999997952 bytes on a 192-CPU host.
+// The RunPod CPU pod: a 2-CPU affinity mask, no CPU quota and a memory
+// limit of 3999997952 bytes (cgroup v1 memory.limit_in_bytes) on a
+// 192-CPU host.
 TEST(ProcessLimitsTest, AffinityMaskAndMemoryMaxBound)
 {
   ProcessLimits limits;

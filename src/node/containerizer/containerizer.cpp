@@ -126,7 +126,7 @@ Try<Resources> Containerizer::resources(const Flags& flags)
       if (cpus < cpus_.get()) {
         LOG(INFO) << "Auto-detected " << cpus_.get() << " cpus on the host;"
                   << " offering " << cpus << ", the bound set by this"
-                  << " process's CPU affinity mask and cgroup cpu.max";
+                  << " process's CPU affinity mask and cgroup CPU quota";
       }
     }
 
@@ -151,7 +151,7 @@ Try<Resources> Containerizer::resources(const Flags& flags)
       if (total < mem_->total) {
         LOG(INFO) << "Auto-detected " << mem_->total << " of memory on the"
                   << " host; sizing from " << total << ", the cgroup"
-                  << " memory.max bound on this process";
+                  << " memory limit on this process";
       }
       if (total >= Gigabytes(2)) {
         mem = total - Gigabytes(1); // Leave 1GB free.

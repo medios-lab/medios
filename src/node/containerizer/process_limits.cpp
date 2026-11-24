@@ -24,9 +24,12 @@
 #include <glog/logging.h>
 
 #include <stout/foreach.hpp>
+#include <stout/numify.hpp>
 #include <stout/os.hpp>
 #include <stout/path.hpp>
+#include <stout/strings.hpp>
 
+#include "linux/cgroups.hpp"
 #include "linux/cgroups2.hpp"
 
 #include "node/containerizer/process_limits.hpp"
@@ -65,6 +68,127 @@ bool hasControl(const string& cgroup, const string& control)
   return os::exists(path::join(cgroups2::path(cgroup), control));
 }
 
+
+void lowerQuota(ProcessLimits* limits, double quota)
+{
+  if (limits->cpuQuota.isNone() || quota < limits->cpuQuota.get()) {
+    limits->cpuQuota = quota;
+  }
+}
+
+
+void lowerMemory(ProcessLimits* limits, const Bytes& memory)
+{
+  if (limits->memoryMax.isNone() || memory < limits->memoryMax.get()) {
+    limits->memoryMax = memory;
+  }
+}
+
+
+void readCgroups2(ProcessLimits* limits)
+{
+  if (!cgroups2::enabled() || !cgroups2::exists(cgroups2::ROOT_CGROUP)) {
+    return;
+  }
+
+  // Inside a cgroup namespace this is "" (the container's own cgroup is the
+  // root of the view). Without one it is the host path, which may not exist
+  // under this mount; such entries are skipped.
+  Try<string> self = cgroups2::cgroup(::getpid());
+  if (self.isError()) {
+    LOG(INFO) << "Not reading cgroup v2 limits: " << self.error();
+    return;
+  }
+
+  foreach (const string& cgroup, lineage(self.get())) {
+    if (!cgroups2::exists(cgroup)) {
+      continue;
+    }
+
+    if (hasControl(cgroup, "cpu.max")) {
+      Try<cgroups2::cpu::BandwidthLimit> bandwidth =
+        cgroups2::cpu::max(cgroup);
+      if (bandwidth.isError()) {
+        LOG(WARNING) << bandwidth.error();
+      } else if (bandwidth->limit.isSome() && bandwidth->period.isSome()) {
+        lowerQuota(
+            limits,
+            bandwidth->limit->ns() /
+              static_cast<double>(bandwidth->period->ns()));
+      }
+    }
+
+    if (hasControl(cgroup, "memory.max")) {
+      Result<Bytes> memory = cgroups2::memory::max(cgroup);
+      if (memory.isError()) {
+        LOG(WARNING) << memory.error();
+      } else if (memory.isSome()) {
+        lowerMemory(limits, memory.get());
+      }
+    }
+  }
+}
+
+
+// cgroup v1 keeps each controller in its own hierarchy. A container often
+// sees its own cgroup mounted as the hierarchy root while /proc/self/cgroup
+// still names the host path (e.g. "/docker/<id>"); the walk below then finds
+// the limit on the root entry "".
+void readCgroups1(ProcessLimits* limits)
+{
+  if (!cgroups::enabled()) {
+    return;
+  }
+
+  // An unlimited v1 cgroup reports a quota of -1 and a memory limit near
+  // 2^63; both fall out of the minimum against the host figures.
+  Result<string> cpuHierarchy = cgroups::hierarchy("cpu");
+  Result<string> cpuCgroup = cgroups::cpu::cgroup(::getpid());
+  if (cpuHierarchy.isSome() && cpuCgroup.isSome()) {
+    foreach (const string& cgroup, lineage(cpuCgroup.get())) {
+      const string dir = path::join(cpuHierarchy.get(), cgroup);
+      if (!os::exists(path::join(dir, "cpu.cfs_quota_us")) ||
+          !os::exists(path::join(dir, "cpu.cfs_period_us"))) {
+        continue;
+      }
+      Try<string> quota =
+        cgroups::read(cpuHierarchy.get(), cgroup, "cpu.cfs_quota_us");
+      Try<string> period =
+        cgroups::read(cpuHierarchy.get(), cgroup, "cpu.cfs_period_us");
+      if (quota.isError() || period.isError()) {
+        LOG(WARNING) << "Failed to read the cfs quota in " << dir << ": "
+                     << (quota.isError() ? quota.error() : period.error());
+        continue;
+      }
+      Try<long long> quotaUs = numify<long long>(strings::trim(quota.get()));
+      Try<long long> periodUs = numify<long long>(strings::trim(period.get()));
+      if (quotaUs.isSome() && periodUs.isSome() &&
+          quotaUs.get() > 0 && periodUs.get() > 0) {
+        lowerQuota(
+            limits, quotaUs.get() / static_cast<double>(periodUs.get()));
+      }
+    }
+  }
+
+  Result<string> memoryHierarchy = cgroups::hierarchy("memory");
+  Result<string> memoryCgroup = cgroups::memory::cgroup(::getpid());
+  if (memoryHierarchy.isSome() && memoryCgroup.isSome()) {
+    foreach (const string& cgroup, lineage(memoryCgroup.get())) {
+      const string dir = path::join(memoryHierarchy.get(), cgroup);
+      if (!os::exists(path::join(dir, "memory.limit_in_bytes"))) {
+        continue;
+      }
+      Try<Bytes> memory =
+        cgroups::memory::limit_in_bytes(memoryHierarchy.get(), cgroup);
+      if (memory.isError()) {
+        LOG(WARNING) << memory.error();
+      } else {
+        lowerMemory(limits, memory.get());
+      }
+    }
+  }
+}
+
 } // namespace {
 
 
@@ -81,51 +205,9 @@ ProcessLimits processLimits()
                  << os::strerror(errno);
   }
 
-  if (!cgroups2::enabled() || !cgroups2::exists(cgroups2::ROOT_CGROUP)) {
-    LOG(INFO) << "cgroup v2 is not available; node resources ignore"
-              << " cgroup limits";
-    return limits;
-  }
-
-  // Inside a cgroup namespace this is "" (the container's own cgroup is the
-  // root of the view). Without one it is the host path, which may not exist
-  // under this mount; such entries are skipped.
-  Try<string> self = cgroups2::cgroup(::getpid());
-  if (self.isError()) {
-    LOG(INFO) << "Not reading cgroup limits: " << self.error();
-    return limits;
-  }
-
-  foreach (const string& cgroup, lineage(self.get())) {
-    if (!cgroups2::exists(cgroup)) {
-      continue;
-    }
-
-    if (hasControl(cgroup, "cpu.max")) {
-      Try<cgroups2::cpu::BandwidthLimit> bandwidth =
-        cgroups2::cpu::max(cgroup);
-      if (bandwidth.isError()) {
-        LOG(WARNING) << bandwidth.error();
-      } else if (bandwidth->limit.isSome() && bandwidth->period.isSome()) {
-        double quota =
-          bandwidth->limit->ns() / static_cast<double>(bandwidth->period->ns());
-        if (limits.cpuQuota.isNone() || quota < limits.cpuQuota.get()) {
-          limits.cpuQuota = quota;
-        }
-      }
-    }
-
-    if (hasControl(cgroup, "memory.max")) {
-      Result<Bytes> memory = cgroups2::memory::max(cgroup);
-      if (memory.isError()) {
-        LOG(WARNING) << memory.error();
-      } else if (memory.isSome()) {
-        if (limits.memoryMax.isNone() || memory.get() < limits.memoryMax.get()) {
-          limits.memoryMax = memory.get();
-        }
-      }
-    }
-  }
+  // A hybrid host mounts both; a limit set through either binds the process.
+  readCgroups2(&limits);
+  readCgroups1(&limits);
 
   return limits;
 }

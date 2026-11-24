@@ -28,18 +28,20 @@ namespace node {
 
 // The CPU and memory this process may use. Inside a container the kernel is
 // the host's, so sysconf(_SC_NPROCESSORS_ONLN) and sysinfo() report the
-// host's totals; the CPU affinity mask and the cgroup v2 limits are what the
-// container is actually allowed. None means no limit was found.
+// host's totals; the CPU affinity mask and the cgroup limits (v2, or v1 on
+// older hosts) are what the container is actually allowed. None means no limit was found.
 struct ProcessLimits
 {
   // CPUs in this process's affinity mask (sched_getaffinity).
   Option<long> affinityCpus;
 
-  // Tightest `cpu.max` quota divided by its period, in CPUs, over this
-  // process's cgroup and its ancestors. May be fractional.
+  // Tightest CPU quota divided by its period, in CPUs, over this process's
+  // cgroup and its ancestors: `cpu.max` on v2, `cpu.cfs_quota_us` over
+  // `cpu.cfs_period_us` on v1. May be fractional.
   Option<double> cpuQuota;
 
-  // Tightest `memory.max` over this process's cgroup and its ancestors.
+  // Tightest memory limit over this process's cgroup and its ancestors:
+  // `memory.max` on v2, `memory.limit_in_bytes` on v1.
   Option<Bytes> memoryMax;
 };
 
