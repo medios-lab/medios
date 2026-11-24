@@ -9,4 +9,7 @@ if [ -z "$wheel" ]; then
   printf '{"ok":false,"step":"sdk","error":"no medios_sdk wheel in %s/vendor; this bundle was not built with try/build-bundle"}\n' "$bundle"
   exit 1
 fi
-exec "$uv" run --quiet --no-project --python "$MEDIOS_TRY_PYTHON" --with "$wheel" python "$@"
+# Parameter: pydantic pinned to the version in the SDK's uv.lock, which the
+# SDK's own tests run against, so the bundle revision fixes every dependency.
+exec "$uv" run --quiet --no-project --python "$MEDIOS_TRY_PYTHON" \
+  --with "$wheel" --with pydantic==2.13.4 python "$@"

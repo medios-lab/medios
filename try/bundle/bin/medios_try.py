@@ -41,6 +41,9 @@ REGISTRATION_TIMEOUT_S = 60
 STOP_GRACE_S = 10
 # Default: first port tried for the controller; the node takes the next free one.
 FIRST_PORT = 5050
+# Heuristic: a socket read that stalls this long fails the download with JSON
+# instead of hanging; a slow but moving download is not affected.
+DOWNLOAD_STALL_TIMEOUT_S = 60
 
 
 def emit(ok: bool, **fields) -> None:
@@ -131,7 +134,9 @@ def cmd_install(args) -> None:
     else:
         source = f"{release['download_base']}/{entry['name']}"
         try:
-            urllib.request.urlretrieve(source, archive)
+            with urllib.request.urlopen(source, timeout=DOWNLOAD_STALL_TIMEOUT_S) as r, \
+                    archive.open("wb") as f:
+                shutil.copyfileobj(r, f, 1 << 20)
         except (urllib.error.URLError, OSError) as e:
             emit(False, step="download", url=source, error=str(e))
     got = sha256(archive)
@@ -151,10 +156,36 @@ def cmd_install(args) -> None:
          bundle_revision=bundle_revision())
 
 
+def registered_nodes(url: str) -> list:
+    try:
+        return get_json(f"{url}/state").get("nodes", [])
+    except (urllib.error.URLError, OSError, ValueError):
+        return []
+
+
+def stop(pid: int) -> bool:
+    """SIGTERM the process group, SIGKILL after STOP_GRACE_S. True if it was alive."""
+    if not alive(pid):
+        return False
+    os.killpg(pid, signal.SIGTERM)
+    deadline = time.monotonic() + STOP_GRACE_S
+    while alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    if alive(pid):
+        os.killpg(pid, signal.SIGKILL)
+    return True
+
+
 def cmd_up(args) -> None:
     run = read_run()
-    if run and alive(run["controller_pid"]) and alive(run["node_pid"]):
-        emit(True, step="up", already_running=True, **run)
+    if run:
+        both = alive(run["controller_pid"]) and alive(run["node_pid"])
+        if both and registered_nodes(run["controller_url"]):
+            emit(True, step="up", already_running=True, **run)
+        # A previous up failed or half-exited: stop what survives before starting again.
+        for name in ("node", "controller"):
+            stop(run[f"{name}_pid"])
+        RUN.unlink()
     bins = bin_dir()
     LOGS.mkdir(parents=True, exist_ok=True)
     cport = free_port(FIRST_PORT, set())
@@ -184,23 +215,27 @@ def cmd_up(args) -> None:
            "work_dir": str(HOME), "bundle_revision": bundle_revision()}
     RUN.write_text(json.dumps(run, indent=2))
 
+    def fail(**fields) -> None:
+        # Leave nothing running behind a failed up.
+        for p in (node, controller):
+            stop(p.pid)
+        RUN.unlink()
+        emit(False, step="up", stopped=True, **fields, **run)
+
     deadline = time.monotonic() + REGISTRATION_TIMEOUT_S
     while time.monotonic() < deadline:
         for name, proc in (("controller", controller), ("node", node)):
             if proc.poll() is not None:
-                emit(False, step="up", error=f"{name} exited with code {proc.returncode}",
-                     log=str(LOGS / f"{name}.log"), log_tail=tail(LOGS / f"{name}.log"), **run)
-        try:
-            nodes = get_json(f"{url}/state").get("nodes", [])
-        except (urllib.error.URLError, OSError, ValueError):
-            nodes = []
+                fail(error=f"{name} exited with code {proc.returncode}",
+                     log=str(LOGS / f"{name}.log"), log_tail=tail(LOGS / f"{name}.log"))
+        nodes = registered_nodes(url)
         if nodes:
             n = nodes[0]
             emit(True, step="up", node_id=n.get("id"), node_resources=n.get("resources"),
                  seconds=round(REGISTRATION_TIMEOUT_S - (deadline - time.monotonic()), 1), **run)
         time.sleep(1)
-    emit(False, step="up", error=f"node did not register within {REGISTRATION_TIMEOUT_S}s",
-         controller_log_tail=tail(LOGS / "controller.log"), node_log_tail=tail(LOGS / "node.log"), **run)
+    fail(error=f"node did not register within {REGISTRATION_TIMEOUT_S}s",
+         controller_log_tail=tail(LOGS / "controller.log"), node_log_tail=tail(LOGS / "node.log"))
 
 
 def cmd_status(args) -> None:
@@ -226,18 +261,7 @@ def cmd_down(args) -> None:
     run = read_run()
     if run is None:
         emit(True, step="down", stopped=[], note="nothing was running")
-    stopped = []
-    for name in ("node", "controller"):
-        pid = run[f"{name}_pid"]
-        if not alive(pid):
-            continue
-        os.killpg(pid, signal.SIGTERM)
-        deadline = time.monotonic() + STOP_GRACE_S
-        while alive(pid) and time.monotonic() < deadline:
-            time.sleep(0.2)
-        if alive(pid):
-            os.killpg(pid, signal.SIGKILL)
-        stopped.append(name)
+    stopped = [name for name in ("node", "controller") if stop(run[f"{name}_pid"])]
     RUN.unlink()
     emit(True, step="down", stopped=stopped)
 
