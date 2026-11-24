@@ -16,7 +16,8 @@ before.
   Python go under `state/`. Removing the preview is `bin/medios-try down`
   followed by deleting this directory.
 - Every `bin/medios-try` command prints one JSON object and exits non-zero on
-  failure. Read the JSON instead of guessing from logs.
+  failure. Read the JSON instead of guessing from logs, and don't read the
+  scripts in `bin/`; the skill files say what each command does.
 - When a step fails, read `skills/troubleshoot/SKILL.md` before trying a fix of
   your own. If no entry matches, stop and offer to help the user file an issue
   (`skills/file-issue/SKILL.md`).
