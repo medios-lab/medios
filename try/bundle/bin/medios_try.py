@@ -89,6 +89,12 @@ def tail(path: Path, lines: int = 30) -> list[str]:
 
 def alive(pid: int) -> bool:
     try:
+        # Reap it first if it is our exited child, so a zombie doesn't count as alive.
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except ChildProcessError:
+        pass
+    try:
         os.kill(pid, 0)
         return True
     except OSError:
@@ -167,12 +173,16 @@ def stop(pid: int) -> bool:
     """SIGTERM the process group, SIGKILL after STOP_GRACE_S. True if it was alive."""
     if not alive(pid):
         return False
-    os.killpg(pid, signal.SIGTERM)
-    deadline = time.monotonic() + STOP_GRACE_S
-    while alive(pid) and time.monotonic() < deadline:
-        time.sleep(0.2)
-    if alive(pid):
-        os.killpg(pid, signal.SIGKILL)
+    try:
+        os.killpg(pid, signal.SIGTERM)
+        deadline = time.monotonic() + STOP_GRACE_S
+        while alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        if alive(pid):
+            os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        # The group is gone, or holds only an exited leader macOS won't signal.
+        pass
     return True
 
 
@@ -188,6 +198,11 @@ def cmd_up(args) -> None:
         RUN.unlink()
     bins = bin_dir()
     LOGS.mkdir(parents=True, exist_ok=True)
+    # Invariant: the controller registry is in_memory, so every up is a new
+    # cluster and a node checkpoint from an earlier up can never be valid; a
+    # stale one makes the node exit with "Incompatible node info detected".
+    shutil.rmtree(HOME / "node" / "meta", ignore_errors=True)
+    shutil.rmtree(HOME / "node-runtime", ignore_errors=True)
     cport = free_port(FIRST_PORT, set())
     nport = free_port(cport + 1, {cport})
     env = {**os.environ, "LIBPROCESS_IP": "127.0.0.1"}
