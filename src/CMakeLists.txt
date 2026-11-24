@@ -221,6 +221,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     linux/perf.cpp
     linux/systemd.cpp
     node/containerizer/device_manager/device_manager.cpp
+    node/containerizer/process_limits.cpp
     node/containerizer/medios/isolators/cgroups/cgroups.cpp
     node/containerizer/medios/isolators/cgroups/subsystem.cpp
     node/containerizer/medios/isolators/cgroups/subsystems/blkio.cpp

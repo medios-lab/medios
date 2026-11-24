@@ -38,6 +38,7 @@
 #include "node/node.hpp"
 
 #include "node/containerizer/containerizer.hpp"
+#include "node/containerizer/process_limits.hpp"
 
 #include "node/containerizer/medios/containerizer.hpp"
 
@@ -102,6 +103,15 @@ Try<Resources> Containerizer::resources(const Flags& flags)
     }
   }
 
+  // A container shares the host kernel, so the OS probes below report the
+  // host's totals. Bound them by what this process is allowed to use.
+#ifdef __linux__
+  const ProcessLimits limits =
+    (hasCpus && hasMem) ? ProcessLimits() : processLimits();
+#else
+  const ProcessLimits limits;
+#endif // __linux__
+
   if (!hasCpus) {
     // No CPU specified so probe OS or resort to DEFAULT_CPUS.
     double cpus;
@@ -112,7 +122,12 @@ Try<Resources> Containerizer::resources(const Flags& flags)
                    << "'; defaulting to " << DEFAULT_CPUS;
       cpus = DEFAULT_CPUS;
     } else {
-      cpus = cpus_.get();
+      cpus = boundCpus(cpus_.get(), limits);
+      if (cpus < cpus_.get()) {
+        LOG(INFO) << "Auto-detected " << cpus_.get() << " cpus on the host;"
+                  << " offering " << cpus << ", the bound set by this"
+                  << " process's CPU affinity mask and cgroup cpu.max";
+      }
     }
 
     resources += Resources::parse(
@@ -132,7 +147,12 @@ Try<Resources> Containerizer::resources(const Flags& flags)
                     << "' ; defaulting to DEFAULT_MEM";
       mem = DEFAULT_MEM;
     } else {
-      Bytes total = mem_->total;
+      Bytes total = boundMemory(mem_->total, limits);
+      if (total < mem_->total) {
+        LOG(INFO) << "Auto-detected " << mem_->total << " of memory on the"
+                  << " host; sizing from " << total << ", the cgroup"
+                  << " memory.max bound on this process";
+      }
       if (total >= Gigabytes(2)) {
         mem = total - Gigabytes(1); // Leave 1GB free.
       } else {

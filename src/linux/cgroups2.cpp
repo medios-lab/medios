@@ -849,10 +849,6 @@ Try<Nothing> set_max(const string& cgroup, const cpu::BandwidthLimit& limit)
 
 Try<cpu::BandwidthLimit> max(const string& cgroup)
 {
-  if (cgroup == ROOT_CGROUP) {
-    return Error("Operation not supported for the root cgroup");
-  }
-
   Try<string> content = cgroups2::read<string>(cgroup, cpu::control::MAX);
   if (content.isError()) {
     return Error("Failed the read 'cpu.max' for cgroup '" + cgroup + "': "
