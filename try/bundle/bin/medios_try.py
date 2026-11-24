@@ -96,9 +96,48 @@ def alive(pid: int) -> bool:
         pass
     try:
         os.kill(pid, 0)
-        return True
     except OSError:
         return False
+    # Not our child: once `up` exits, the processes belong to PID 1, and in a
+    # container whose PID 1 never reaps (`sleep infinity`, a shell) an exited
+    # process stays a zombie that kill(pid, 0) still finds. Linux shows it as
+    # state Z in /proc; the state field follows the parenthesised command name.
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        return stat[stat.rindex(")") + 2] != "Z"
+    except (OSError, ValueError, IndexError):
+        return True
+
+
+def container_resources() -> str | None:
+    """A --resources spec from the CPU set and cgroup v2 limits, or None when unlimited.
+
+    Workaround, owned by this bundle: the node sizes itself from the host's
+    CPU count and memory, so inside a container (a RunPod pod: 2 vCPUs and a
+    4 GB cgroup on a 192-CPU, 1.1 TB host) it offers resources it can't use.
+    Retire when medios-node reads these limits itself (medios-lab/medios#5).
+    """
+    if platform.system() != "Linux":
+        return None
+    parts = []
+    cpus = len(os.sched_getaffinity(0))
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if quota != "max":
+            cpus = min(cpus, max(1, int(quota) // int(period)))
+    except (OSError, ValueError):
+        pass
+    if cpus < (os.cpu_count() or cpus):
+        parts.append(f"cpus:{cpus}")
+    try:
+        limit = Path("/sys/fs/cgroup/memory.max").read_text().strip()
+        if limit != "max":
+            mb = int(limit) // (1 << 20)
+            # Same reserve the node applies to detected memory: 1 GB, or half below 2 GB.
+            parts.append(f"mem:{mb - 1024 if mb >= 2048 else mb // 2}")
+    except (OSError, ValueError):
+        pass
+    return ";".join(parts) or None
 
 
 def free_port(start: int, taken: set[int]) -> int:
@@ -220,8 +259,9 @@ def cmd_up(args) -> None:
         f"--port={nport}", f"--work_dir={HOME / 'node'}", f"--runtime_dir={HOME / 'node-runtime'}",
         "--containerizers=medios", "--launcher=posix", "--isolation=",
         f"--launcher_dir={bins}"]
-    if args.resources:
-        node_argv.append(f"--resources={args.resources}")
+    resources = args.resources or container_resources()
+    if resources:
+        node_argv.append(f"--resources={resources}")
     node = start("node", node_argv)
 
     url = f"http://127.0.0.1:{cport}"
