@@ -192,9 +192,19 @@ def cmd_install(args) -> None:
         t.extractall(INSTALL, filter="data")
     root = INSTALL / entry["name"].removesuffix(".tar.gz")
     archive.unlink()
+    controller = str(root / "bin" / "medios-controller")
+    (INSTALL / "current").unlink(missing_ok=True)
+    try:
+        version = subprocess.run([controller, "--version"], capture_output=True, text=True)
+    except OSError as e:
+        emit(False, step="install", error=f"could not run {controller}: {e}")
+    if version.returncode != 0:
+        emit(False, step="install",
+             error=f"{controller} --version exited with code {version.returncode}",
+             output=(version.stderr or version.stdout).strip().splitlines()[-5:])
+    # Cleared above and written last, so an install whose controller cannot
+    # run is never current.
     (INSTALL / "current").write_text(str(root))
-    version = subprocess.run([str(root / "bin" / "medios-controller"), "--version"],
-                             capture_output=True, text=True)
     emit(True, step="install", medios_version=release["medios_version"], platform=key,
          source=source, sha256=got, bin=str(root / "bin"),
          controller_version=(version.stdout or version.stderr).strip().splitlines()[:1],
@@ -246,10 +256,20 @@ def cmd_up(args) -> None:
     nport = free_port(cport + 1, {cport})
     env = {**os.environ, "LIBPROCESS_IP": "127.0.0.1"}
 
+    started: list[subprocess.Popen] = []
+
     def start(name: str, argv: list[str]) -> subprocess.Popen:
         log = (LOGS / f"{name}.log").open("ab")
-        return subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT, env=env,
-                                start_new_session=True)
+        try:
+            proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT, env=env,
+                                    start_new_session=True)
+        except OSError as e:
+            # run.json is not written yet, so `down` could not find these.
+            for p in reversed(started):
+                stop(p.pid)
+            emit(False, step="up", stopped=True, error=f"could not start {name}: {e}")
+        started.append(proc)
+        return proc
 
     controller = start("controller", [
         str(bins / "medios-controller"), "--ip=127.0.0.1", f"--port={cport}",
