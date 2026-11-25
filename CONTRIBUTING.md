@@ -25,13 +25,16 @@ restart, a lost connection. When timing is part of the behavior, give the
 bound. Keep the scenarios few enough to read in a minute or two; a one-line
 fix usually needs one.
 
-## The scenario tree is the scope of Medios
+## A pull request does what it declares
 
-`bdd/features/` holds one directory per area of behavior, and together the
-feature files describe everything Medios promises. A pull request that adds a
-scenario to an existing feature refines a promise Medios already makes. A pull
-request that adds a feature file makes a new one, so it links an issue in which
-a maintainer agreed to the feature before the code was written.
+The scenarios in a pull request are its declaration: the whole of what it
+changes for an outside observer. The code does that and nothing more. Behavior
+the scenarios leave out comes out of the pull request, however useful, and
+goes into one of its own with its own scenarios.
+
+A pull request that adds a feature file declares a feature Medios did not have,
+so it links an issue in which a maintainer agreed to the feature before the
+code was written.
 
 ## Each scenario names the test that proves it
 
@@ -72,10 +75,10 @@ says why in one sentence.
 
 In this order:
 
-1. The code changes no observable behavior that the scenarios leave out.
-   Behavior beyond the scenarios comes out of the pull request and goes into
-   one of its own; adding a scenario for it afterwards is the exception, and
-   the description says why.
+1. The code changes no observable behavior beyond what the pull request's
+   scenarios declare. Undeclared behavior comes out of the pull request;
+   adding a scenario for it afterwards is the exception, and the description
+   says why.
 2. Every scenario is implemented: its named test exists, ran, and exercises
    what the scenario describes.
 3. Each scenario states behavior an outside observer can see and leaves the
