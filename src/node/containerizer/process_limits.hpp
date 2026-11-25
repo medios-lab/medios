@@ -18,9 +18,14 @@
 #define __NODE_CONTAINERIZER_PROCESS_LIMITS_HPP__
 
 #include <algorithm>
+#include <string>
 
 #include <stout/bytes.hpp>
+#include <stout/error.hpp>
+#include <stout/foreach.hpp>
 #include <stout/option.hpp>
+#include <stout/strings.hpp>
+#include <stout/try.hpp>
 
 namespace medios {
 namespace internal {
@@ -64,6 +69,30 @@ inline Bytes boundMemory(const Bytes& host, const ProcessLimits& limits)
   return limits.memoryMax.isSome()
     ? std::min(host, limits.memoryMax.get())
     : host;
+}
+
+
+// The cgroup v2 membership in the contents of /proc/<pid>/cgroup, relative
+// to the cgroup v2 mount ("" for its root). The file holds one line per
+// hierarchy; the v2 line is "0::/<cgroup>", optionally followed by
+// " (deleted)". A host that also mounts v1 hierarchies lists them on their
+// own lines, in any order.
+inline Try<std::string> unifiedCgroup(const std::string& procCgroup)
+{
+  foreach (const std::string& line, strings::tokenize(procCgroup, "\n")) {
+    const std::string entry = strings::trim(line);
+    if (!strings::startsWith(entry, "0::/")) {
+      continue;
+    }
+
+    return strings::remove(
+        strings::remove(entry, "0::/", strings::PREFIX),
+        " (deleted)",
+        strings::SUFFIX);
+  }
+
+  return Error(
+      "no cgroup v2 entry ('0::') in '" + strings::trim(procCgroup) + "'");
 }
 
 

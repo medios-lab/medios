@@ -91,10 +91,16 @@ void readCgroups2(ProcessLimits* limits)
     return;
   }
 
+  Try<string> membership = os::read("/proc/self/cgroup");
+  if (membership.isError()) {
+    LOG(WARNING) << "Not reading cgroup v2 limits: " << membership.error();
+    return;
+  }
+
   // Inside a cgroup namespace this is "" (the container's own cgroup is the
   // root of the view). Without one it is the host path, which may not exist
   // under this mount; such entries are skipped.
-  Try<string> self = cgroups2::cgroup(::getpid());
+  Try<string> self = unifiedCgroup(membership.get());
   if (self.isError()) {
     LOG(INFO) << "Not reading cgroup v2 limits: " << self.error();
     return;

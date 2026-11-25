@@ -17,12 +17,14 @@
 #include <gtest/gtest.h>
 
 #include <stout/bytes.hpp>
+#include <stout/gtest.hpp>
 
 #include "node/containerizer/process_limits.hpp"
 
 using medios::internal::node::ProcessLimits;
 using medios::internal::node::boundCpus;
 using medios::internal::node::boundMemory;
+using medios::internal::node::unifiedCgroup;
 
 
 TEST(ProcessLimitsTest, NoLimitsKeepsHostFigures)
@@ -66,4 +68,41 @@ TEST(ProcessLimitsTest, LimitsAboveHostDoNotRaiseIt)
 
   EXPECT_EQ(8.0, boundCpus(8, limits));
   EXPECT_EQ(Gigabytes(16), boundMemory(Gigabytes(16), limits));
+}
+
+
+TEST(ProcessLimitsTest, UnifiedCgroupOnV2Host)
+{
+  EXPECT_SOME_EQ("user.slice/session-3.scope",
+                 unifiedCgroup("0::/user.slice/session-3.scope\n"));
+  EXPECT_SOME_EQ("", unifiedCgroup("0::/\n"));
+  EXPECT_SOME_EQ("medios/abc", unifiedCgroup("0::/medios/abc (deleted)\n"));
+}
+
+
+// A host that mounts v1 hierarchies beside cgroup v2 lists one line per
+// hierarchy, with the v2 line first or last.
+TEST(ProcessLimitsTest, UnifiedCgroupBesideV1Hierarchies)
+{
+  EXPECT_SOME_EQ(
+      "system.slice/medios-node.service",
+      unifiedCgroup(
+          "2:net_cls,net_prio:/\n"
+          "1:name=systemd:/system.slice/medios-node.service\n"
+          "0::/system.slice/medios-node.service\n"));
+
+  EXPECT_SOME_EQ(
+      "kubepods/pod1",
+      unifiedCgroup(
+          "0::/kubepods/pod1\n"
+          "1:net_cls:/kubepods/pod1\n"));
+}
+
+
+TEST(ProcessLimitsTest, UnifiedCgroupAbsentOnV1Host)
+{
+  EXPECT_ERROR(unifiedCgroup(
+      "5:memory:/docker/abc\n"
+      "4:cpu,cpuacct:/docker/abc\n"));
+  EXPECT_ERROR(unifiedCgroup(""));
 }
