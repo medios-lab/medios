@@ -1132,8 +1132,7 @@ void Controller::initialize()
 
   // Start contending to be a leading controller and detecting the current
   // leader.
-  contender->contend()
-    .onAny(defer(self(), &Controller::contended, lambda::_1));
+  contend();
   detector->detect()
     .onAny(defer(self(), &Controller::detected, lambda::_1));
 }
@@ -2124,12 +2123,27 @@ void Controller::submitScheduler(const string& name)
 }
 
 
+void Controller::contend()
+{
+  contender->contend()
+    .onAny(defer(self(), &Controller::contended, lambda::_1));
+}
+
+
 void Controller::contended(const Future<Future<Nothing>>& candidacy)
 {
   CHECK(!candidacy.isDiscarded());
 
   if (candidacy.isFailed()) {
-    EXIT(EXIT_FAILURE) << "Failed to contend: " << candidacy.failure();
+    // A failed contend means the election store was unreachable. This
+    // controller is not leading (a leader that loses its candidacy exits
+    // in `lostCandidacy`), so it holds no leadership to give up and
+    // contends again rather than exiting. It rejoins the election as soon
+    // as the store is back, with no supervisor restart.
+    LOG(WARNING) << "Failed to contend: " << candidacy.failure()
+                 << "; contending again in " << CONTEND_RETRY_INTERVAL;
+    delay(CONTEND_RETRY_INTERVAL, self(), &Controller::contend);
+    return;
   }
 
   // Watch for candidacy change.
@@ -2151,8 +2165,7 @@ void Controller::lostCandidacy(const Future<Nothing>& lost)
   }
 
   LOG(INFO) << "Lost candidacy as a follower... Contend again";
-  contender->contend()
-    .onAny(defer(self(), &Controller::contended, lambda::_1));
+  contend();
 }
 
 
