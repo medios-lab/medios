@@ -347,6 +347,23 @@ gtest_discover_tests(test_killtree
   PROPERTIES TIMEOUT 60
 )
 
+# --- Node resource bounds from the CPU set and cgroup limits (medios#5) ---
+add_executable(test_process_limits
+  process_limits_tests.cpp
+)
+target_link_libraries(test_process_limits
+  PRIVATE
+    stout
+    GTest::gtest_main
+)
+target_include_directories(test_process_limits
+  PRIVATE ${CMAKE_SOURCE_DIR}/src
+)
+gtest_discover_tests(test_process_limits
+  DISCOVERY_TIMEOUT 10
+  PROPERTIES TIMEOUT 60
+)
+
 # --- filesystem/linux isolator tests (medios#459) ---
 add_executable(test_filesystem_linux
   filesystem_linux_tests.cpp

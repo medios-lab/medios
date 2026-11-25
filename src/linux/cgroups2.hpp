@@ -225,8 +225,9 @@ Try<Stats> stats(const std::string& cgroup);
 Try<Nothing> set_max(const std::string& cgroup, const BandwidthLimit& limit);
 
 
-// Determine the bandwidth limit for a cgroup.
-// Cannot be used for the root cgroup.
+// Determine the bandwidth limit for a cgroup. The true root cgroup has no
+// 'cpu.max', so this fails there; inside a cgroup namespace the root of the
+// view is a real cgroup and may carry one.
 Try<BandwidthLimit> max(const std::string& cgroup);
 
 } // namespace cpu {
