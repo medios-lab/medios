@@ -1,0 +1,40 @@
+# Fails a pull request that has no linked issue.
+#
+# A linked issue is one GitHub lists under the pull request's Development
+# section: named with a closing keyword in the description (Fixes #N,
+# Closes #N, Resolves #N) or added by hand in the sidebar. A bare #N mention
+# is not a link.
+#
+# Adding a link in the sidebar raises no pull_request event, so this check
+# keeps its earlier result until the description is edited or a commit is
+# pushed.
+
+name: Linked issue
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  pull-requests: read
+  issues: read
+
+jobs:
+  linked-issue:
+    name: pull request links an issue
+    runs-on: ubuntu-latest
+    steps:
+      - name: Count linked issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          count=$(gh pr view "$PR" --repo "$REPO" \
+            --json closingIssuesReferences \
+            --jq '.closingIssuesReferences | length')
+          if [ "$count" -eq 0 ]; then
+            echo "::error::This pull request links no issue. Add 'Fixes #N' to the description, or link an issue under Development in the sidebar, then edit the description to re-run this check."
+            exit 1
+          fi
+          echo "Linked issues: $count"

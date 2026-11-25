@@ -472,10 +472,12 @@ int main(int argc, char** argv)
       nodeRemovalLimiter,
       flags);
 
-  if (flags.controller_detector.isNone()) {
-    // It means we are using the standalone detector so we need to
-    // appoint this Controller as the leader.
-    dynamic_cast<StandaloneControllerDetector*>(detector)->appoint(controller->info());
+  // Only the standalone detector needs this controller appointed as leader;
+  // an etcd or module detector learns the leader from its election.
+  StandaloneControllerDetector* standalone =
+    dynamic_cast<StandaloneControllerDetector*>(detector);
+  if (standalone != nullptr) {
+    standalone->appoint(controller->info());
   }
 
   process::spawn(controller);

@@ -2,7 +2,7 @@
 
 This is a guide for LLM/AI agents that want to write schedulers (frameworks) against medios.
 
-If you are an AI coding assistant working **on** the medios codebase rather than as a consumer, see `CLAUDE.md` and `docs/DEVELOPMENT.md` instead.
+If you are an AI coding assistant working **on** the medios codebase rather than as a consumer, see `CLAUDE.md` and `docs/DEVELOPMENT.md` instead. Rules for reviewing pull requests are in [Code Review Rules](#code-review-rules) at the end of this file.
 
 ## What medios is, in one paragraph
 
@@ -296,3 +296,44 @@ Tracked as #190.
 ## Reporting bugs / asking questions
 
 Issues at https://github.com/medios-lab/medios/issues. Label the issue `agent-framework` if it's about the consumer-facing API surface this guide covers.
+
+## Code Review Rules
+
+These rules are for AI reviewers of pull requests to this repository. The
+project context behind them is in `CLAUDE.md`.
+
+### Stable surfaces
+
+- `include/mesos/`, every `.proto` file, and the types defined in `stout/` and
+  `libprocess/` are stable interfaces. Flag a change to any of them that the
+  pull request description does not name as an interface or protocol change.
+- Flag a change that alters resource-offer semantics: what an offer contains,
+  when it is sent or rescinded, or what accept and decline do.
+- When code is stripped, the interface and its call sites stay and the
+  implementation becomes a stub. Flag a strip that deletes an interface or a
+  call site.
+
+### Failure behavior
+
+- Required identity, configuration and state are explicit. Flag a default or a
+  nearby value substituted for a missing required one, and flag any path that
+  reports success without performing the operation.
+- Flag a change that makes a test pass by bypassing a component: auth disabled
+  in a fixture, a special case that skips a missing dependency.
+
+### Dependencies
+
+- Flag a new runtime dependency. A vendored dependency goes through
+  `cmake/Dependencies.cmake` with a pinned SHA; flag one added any other way.
+
+### Evidence
+
+- A pull request that changes behavior states the commit it was built at and
+  the test counts from a Linux build. Flag a behavior change with no test under
+  `tests/` that exercises it.
+
+### Reporting
+
+- Report a defect with the input, call sequence or state that produces it.
+- Label a suggestion that has no demonstrated failure as hardening, separately
+  from defects.
