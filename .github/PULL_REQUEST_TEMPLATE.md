@@ -1,18 +1,17 @@
 ## Behavioral claim
-What externally observable behavior does this PR change or preserve? Link the issue/design record.
 
-## Gherkin contract
-Links to changed `bdd/features/**/*.feature` scenarios and which invariants they establish.
+<!-- What an outside observer sees change, in a sentence or two. Link the issue. -->
 
-## Oracle and evidence
-What independent observations establish the result? Link traces and results. Use PASS / ASSERTION_FAILURE / INFRA_ERROR / NOT_RUN explicitly.
+## Scenarios
 
-**Base (for bug fix):** RED / NOT_RUN — evidence:
-**Head:** GREEN / NOT_RUN — evidence:
-**Existing regression corpus:** PASS / NOT_RUN — evidence:
+<!-- The scenarios under bdd/features/ this pull request adds or changes.
+     With none, one sentence on why nothing an outside observer sees changes. -->
 
-## Agentic review
-What adversarial failure cases were explored? Which remain untested? Were step bindings or oracle predicates changed?
+## Evidence
 
-## Exemption request (only if no observable behavior changes)
-Remove this section unless requesting an exemption. If no scenario is included, add a separate line starting exactly `BDD-EXEMPT: ` followed by a concrete reason. Maintainer confirmation is required.
+<!-- Commit built, host, test counts. For a bug fix: the named test fails on
+     the base commit (say how) and passes on the head commit. -->
+
+## Not tested
+
+<!-- What this pull request leaves unproven. -->

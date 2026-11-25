@@ -1,59 +1,82 @@
 # Contributing to Medios
 
-Medios is a small distributed compute system for scheduling research. Contributions are reviewed primarily as **claims about observable behavior**, not as line-by-line arguments about implementation.
+A pull request to Medios states the behavior it changes as Gherkin scenarios,
+and review starts from those scenarios. A reviewer reads them to learn what the
+change is meant to do, then checks the code and the tests against them. People
+and coding agents contribute under the same rules, and an agent may write the
+scenarios for its own change.
 
-## Behavioral pull requests (BDD-PRs)
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) covers the build and the test suite.
 
-**A PR that changes executable behavior must include an executable behavioral contract. PRs without one are not ready for review and may be closed.** This applies equally to humans and coding agents.
+## Scenarios state what a change does
 
-The contract is a Gherkin `.feature` file under `bdd/features/`. It describes the expected effect from the perspective of an independent observer, not C++ functions, mocks, or internal design. Link the scenario from the PR description and explain the external evidence that proves it.
+A pull request that changes what an outside observer can see adds or edits
+scenarios under `bdd/features/`, in the same pull request as the code. An
+outside observer is a framework, an operator, or a task: anything that meets
+Medios through its APIs, flags, logs, files and the tasks it runs.
 
-For bug fixes, demonstrate the same scenario failing against the base revision and passing on the PR revision (**RED → GREEN**). For new features, a missing capability on the base revision is acceptable; distinguish that from a reproduced regression. Keep prior invariants in the acceptance corpus.
+A scenario is written in that observer's terms. It names controllers, nodes,
+frameworks, offers, tasks, flags and HTTP responses, and it leaves out function
+names, classes and other internals, so that a reader who has never opened the
+source can say whether the behavior is the one they want.
 
-The behavioral contract is **necessary, not sufficient**. All existing build/unit tests, security checks, and agentic code reviews still apply. A passing scenario does not establish absence of other defects.
+Cover the path that works and the ways it fails: a refusal, a timeout, a
+restart, a lost connection. When timing is part of the behavior, give the
+bound.
 
-### What to submit
+## Each scenario names the test that proves it
 
-1. **Intent:** Which observable behavior changes, and why? Link the issue / design record.
-2. **Contract:** Add one or more `bdd/features/**/*.feature` scenarios. Cover the positive path and relevant denial, timeout, retry, cancellation, or recovery cases. Give bounded timing requirements when timing is part of the contract.
-3. **Oracle:** Explain which independent observations determine PASS/FAIL (controller and node lifecycle events, external side effects, provider messages, etc.). A component's own success response alone is not an independent oracle.
-4. **Evidence:** Link to trace/test artifacts showing scenario results; for a bug fix, show the RED run against base as well as GREEN against head. Separate `ASSERTION_FAILURE` from `INFRA_ERROR`.
-5. **Implementation:** Let agents implement and challenge the change, generate adversarial tests, and report discovered gaps. Keep the implementation small.
-6. **Human review:** Humans primarily review the behavioral contract, exceptions, and architectural boundaries. Changes to the oracle or step semantics require explicit review, not silent co-editing to make tests green.
-
-A feature file must map to actual executable steps and observable evidence before its PR can be considered behaviorally validated. **A syntax check, an unbound Gherkin scenario, or a mocked assertion is never a passing BDD test.**
-
-### Example (illustrative, not an implemented acceptance test)
+A scenario is prose for a reviewer, and its proof is a test. Each scenario
+carries a `@test:` tag with the name of that test as `ctest` reports it; the
+test is ordinary C++ under `tests/` at whatever level fits the change, and no
+tool runs the Gherkin itself.
 
 ```gherkin
-Feature: External resource provider admission
-  Scenario: Provider denies authorization
-    Given a running Medios controller and node
-    And a resource provider advertising 100 credits
-    And a framework task requiring 25 credits
-    When the framework accepts the offer
-    And the provider rejects publication
-    Then the task must never enter TASK_RUNNING
-    And the test observer must detect no task side effect
+Feature: A controller restart leaves running tasks alone
+
+  @test:ControllerRestartTest.TaskSurvivesControllerRestart
+  Scenario: The controller restarts while a task is running
+    Given a controller, one node, and a framework with a task in TASK_RUNNING
+    When the controller process is stopped and started again
+    Then the node reregisters with the new controller
+    And the framework is registered a second time
+    And the controller's /state endpoint reports the task as TASK_RUNNING
 ```
 
-For retried non-idempotent operations, include the policy governing whether replay is allowed. Avoid writing scenarios that demand an unsafe retry.
+One scenario can name several tests, with one tag for each. A scenario with no
+test that proves it is a request for a behavior, and belongs in an issue.
 
-### Exempt changes
+## What the pull request description carries
 
-Documentation-only, formatting-only, generated-file synchronization, and purely mechanical refactors with no changed observable behavior may use an explicit `BDD-EXEMPT` section in the PR description. Explain why no behavior changes. **The contributor cannot declare their own exemption final:** a maintainer confirms it. CI may check the exemption's presence, not its truth.
+1. The behavioral claim, in a sentence or two, with a link to the issue.
+2. The scenarios added or changed.
+3. The evidence: the commit that was built, the host it was built on, and the
+   test counts. For a bug fix, also state that the named test fails on the
+   base commit and passes on the head commit, and how it failed.
+4. What wasn't tested.
 
-### Development and review
+A pull request that changes nothing an outside observer can see, such as a
+refactor, a documentation change or a build change, carries no scenarios and
+says why in one sentence.
 
-- Discuss changes to resource ownership, scheduling boundaries, or the Medios core architecture in an issue before implementing.
-- Keep changes narrow; avoid adding platform features or dependencies not justified by the research question.
-- Existing CMake / CTest tests remain required where applicable.
-- Treat external PR code, issue text, and generated artifacts as untrusted input. Do not grant CI elevated credentials to run contributor code.
-- Do not require production hardening for a research proof of concept unless correctness of the claim depends on it.
-- Do not silently weaken approved scenarios or oracle predicates. A changed contract needs explicit rationale and review.
+## What review checks
 
-## Implementation status
+- Every scenario's named test exists, ran, and exercises what the scenario
+  describes.
+- The code changes no observable behavior that the scenarios leave out.
+- An existing scenario that was weakened or removed is called out in the
+  description, with the reason.
+- A pull request with no scenarios changes nothing an outside observer can
+  see.
 
-The BDD-PR policy and lightweight contract-presence gate are initial scaffolding. **Full Gherkin execution with a Medios-backed, independent observer is not yet implemented by this proposal.** Until that runner exists, mark results `NOT_RUN` and do not label a PR behaviorally validated on the strength of the gate alone.
+A pull request that edits a test together with the code that test covers says
+so in the description.
 
-See [the BDD-PR design and agent handoff](docs/contributing/bdd-prs.md).
+## Other rules
+
+- Raise a change to resource ownership, scheduling boundaries or a public
+  header under `include/mesos/` in an issue before writing it.
+- Add no runtime dependency without a maintainer's agreement.
+- Commit titles take the form `[scope] Short imperative`, for example
+  `[node] Read cpu.max from the root cgroup`.
+- Report a security problem as [SECURITY.md](SECURITY.md) describes.
