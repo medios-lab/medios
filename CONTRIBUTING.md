@@ -22,7 +22,16 @@ source can say whether the behavior is the one they want.
 
 Cover the path that works and the ways it fails: a refusal, a timeout, a
 restart, a lost connection. When timing is part of the behavior, give the
-bound.
+bound. Keep the scenarios few enough to read in a minute or two; a one-line
+fix usually needs one.
+
+## The scenario tree is the scope of Medios
+
+`bdd/features/` holds one directory per area of behavior, and together the
+feature files describe everything Medios promises. A pull request that adds a
+scenario to an existing feature refines a promise Medios already makes. A pull
+request that adds a feature file makes a new one, so it links an issue in which
+a maintainer agreed to the feature before the code was written.
 
 ## Each scenario names the test that proves it
 
@@ -49,7 +58,7 @@ test that proves it is a request for a behavior, and belongs in an issue.
 ## What the pull request description carries
 
 1. The behavioral claim, in a sentence or two, with a link to the issue.
-2. The scenarios added or changed.
+2. The scenarios added, and separately the scenarios changed or removed.
 3. The evidence: the commit that was built, the host it was built on, and the
    test counts. For a bug fix, also state that the named test fails on the
    base commit and passes on the head commit, and how it failed.
@@ -61,13 +70,20 @@ says why in one sentence.
 
 ## What review checks
 
-- Every scenario's named test exists, ran, and exercises what the scenario
-  describes.
-- The code changes no observable behavior that the scenarios leave out.
-- An existing scenario that was weakened or removed is called out in the
-  description, with the reason.
-- A pull request with no scenarios changes nothing an outside observer can
-  see.
+In this order:
+
+1. The code changes no observable behavior that the scenarios leave out.
+   Behavior beyond the scenarios comes out of the pull request and goes into
+   one of its own; adding a scenario for it afterwards is the exception, and
+   the description says why.
+2. Every scenario is implemented: its named test exists, ran, and exercises
+   what the scenario describes.
+3. Each scenario states behavior an outside observer can see and leaves the
+   code out.
+4. An existing scenario that was weakened or removed is called out in the
+   description, with the reason.
+5. A pull request with no scenarios changes nothing an outside observer can
+   see.
 
 A pull request that edits a test together with the code that test covers says
 so in the description.
