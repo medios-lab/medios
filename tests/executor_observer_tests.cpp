@@ -264,11 +264,6 @@ TEST_F(ObserverSetTest, EachLineCarriesItsObserversName)
 
   ASSERT_EQ(1u, seen.size());
   EXPECT_EQ("haiku: OK", seen[0]);
-
-  // The second observer never exits by itself. Kill it and wait for both
-  // to be reaped, so the test leaves no child behind.
-  observers->signalKill();
-  drainAfterExit(observers);
 }
 
 
