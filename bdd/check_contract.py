@@ -5,6 +5,7 @@ Real step binding, independent observation, and PASS/FAIL evaluation belong to
 the future Medios-backed acceptance harness; this script must not claim them.
 """
 import os
+import re
 import pathlib
 import subprocess
 import sys
@@ -46,7 +47,8 @@ def main():
     if code_changed and not features:
         pr_body = os.environ.get("PR_BODY", "")
         # A maintainer must still confirm the exemption; this is presence only.
-        if "BDD-EXEMPT" not in pr_body or not pr_body.split("BDD-EXEMPT", 1)[1].strip():
+        exemptions = re.findall(r"(?m)^BDD-EXEMPT: +([^\\n]+)$", pr_body)
+        if not exemptions or exemptions[0].strip().lower() in ("n/a", "none", "todo", "reason", "<reason>"):
             print("ERROR: behavioral/runtime changes require a bdd/features/**/*.feature "
                   "contract, or a reasoned BDD-EXEMPT section in the PR description.",
                   file=sys.stderr)
