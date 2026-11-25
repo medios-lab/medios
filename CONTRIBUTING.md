@@ -32,9 +32,9 @@ changes for an outside observer. The code does that and nothing more. Behavior
 the scenarios leave out comes out of the pull request, however useful, and
 goes into one of its own with its own scenarios.
 
-A pull request that adds a feature file declares a feature Medios did not have,
-so it links an issue in which a maintainer agreed to the feature before the
-code was written.
+Every pull request links the issue it answers. An issue is where a maintainer
+agrees that a change is wanted, so a new feature has that agreement before its
+code is written.
 
 ## Each scenario names the test that proves it
 
@@ -60,7 +60,8 @@ test that proves it is a request for a behavior, and belongs in an issue.
 
 ## What the pull request description carries
 
-1. The behavioral claim, in a sentence or two, with a link to the issue.
+1. The issue the pull request answers, and the behavioral claim in a sentence
+   or two.
 2. The scenarios added, and separately the scenarios changed or removed.
 3. The evidence: the commit that was built, the host it was built on, and the
    test counts. For a bug fix, also state that the named test fails on the
@@ -75,17 +76,18 @@ says why in one sentence.
 
 In this order:
 
-1. The code changes no observable behavior beyond what the pull request's
+1. The pull request links an issue, and its scenarios answer that issue.
+2. The code changes no observable behavior beyond what the pull request's
    scenarios declare. Undeclared behavior comes out of the pull request;
    adding a scenario for it afterwards is the exception, and the description
    says why.
-2. Every scenario is implemented: its named test exists, ran, and exercises
+3. Every scenario is implemented: its named test exists, ran, and exercises
    what the scenario describes.
-3. Each scenario states behavior an outside observer can see and leaves the
+4. Each scenario states behavior an outside observer can see and leaves the
    code out.
-4. An existing scenario that was weakened or removed is called out in the
+5. An existing scenario that was weakened or removed is called out in the
    description, with the reason.
-5. A pull request with no scenarios changes nothing an outside observer can
+6. A pull request with no scenarios changes nothing an outside observer can
    see.
 
 A pull request that edits a test together with the code that test covers says

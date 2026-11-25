@@ -1,6 +1,7 @@
 ## Behavioral claim
 
-<!-- What an outside observer sees change, in a sentence or two. Link the issue. -->
+<!-- The issue this answers (Fixes #N or Refs #N), then what an outside
+     observer sees change, in a sentence or two. -->
 
 ## Scenarios
 
