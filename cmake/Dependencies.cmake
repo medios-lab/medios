@@ -53,7 +53,7 @@ if(NOT TARGET boost)
 endif()
 
 # --- zlib ---
-set(ZLIB_BUILD_EXAMPLES OFF CACHE INTERNAL "")
+set(ZLIB_BUILD_TESTING OFF CACHE INTERNAL "")
 FetchContent_Declare(zlib
   GIT_REPOSITORY https://github.com/madler/zlib.git
   GIT_TAG 99623ef7097352da7993ba614161fd6a311e046e # v1.4
