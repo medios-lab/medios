@@ -14,5 +14,5 @@ What independent observations establish the result? Link traces and results. Use
 ## Agentic review
 What adversarial failure cases were explored? Which remain untested? Were step bindings or oracle predicates changed?
 
-## BDD-EXEMPT (only if no observable behavior changes)
-If no scenario is included, explain why the PR is documentation-only, formatting-only, or mechanically behavior-preserving. Maintainer confirmation is required.
+## Exemption request (only if no observable behavior changes)
+Remove this section unless requesting an exemption. If no scenario is included, add a separate line starting exactly `BDD-EXEMPT: ` followed by a concrete reason. Maintainer confirmation is required.
