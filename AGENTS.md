@@ -302,6 +302,28 @@ Issues at https://github.com/medios-lab/medios/issues. Label the issue `agent-fr
 These rules are for AI reviewers of pull requests to this repository. The
 project context behind them is in `CLAUDE.md`.
 
+### Declared behavior
+
+A pull request declares the behavior it changes as Gherkin scenarios under
+`bdd/features/`; `CONTRIBUTING.md` has the rule. Read the scenarios in the diff
+before the code, and check these in order. Report the first two as P1.
+
+- Flag any change in the diff to what a framework, an operator or a task can
+  observe (an API response, a flag, a log line, a file, an offer, a task
+  state, a timing bound) that no scenario in the pull request declares. Name
+  the file and the behavior, and say that it belongs in its own pull request.
+- Flag a scenario the diff does not implement, and a scenario whose `@test:`
+  tag names a test that is absent or that does not exercise what the scenario
+  describes.
+- Flag a pull request with no scenarios whose diff changes observable
+  behavior.
+- Flag an existing scenario that the diff weakens or removes without the
+  description saying so and why.
+- Flag a scenario that names functions, classes or other internals instead of
+  observable behavior.
+- Flag a pull request that links no issue, or whose scenarios go beyond the
+  issue it links.
+
 ### Stable surfaces
 
 - `include/mesos/`, every `.proto` file, and the types defined in `stout/` and
