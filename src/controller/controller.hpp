@@ -599,6 +599,9 @@ protected:
   void fileAttached(const process::Future<Nothing>& result,
                     const std::string& path);
 
+  // Enters the leader election; `contended` handles the result.
+  void contend();
+
   // Invoked when the contender has entered the contest.
   void contended(const process::Future<process::Future<Nothing>>& candidacy);
 

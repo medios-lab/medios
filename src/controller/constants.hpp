@@ -117,6 +117,13 @@ constexpr Duration MIN_WAIT_BEFORE_ORPHAN_OPERATION_ADOPTION = Minutes(10);
 // Time interval to check for updated watchers list.
 constexpr Duration ALLOWLIST_WATCH_INTERVAL = Seconds(5);
 
+// Parameter: how long a follower waits before contending again after a
+// failed contend (the election store was unreachable). One second matches
+// the etcd detector's leader poll, so a follower rejoins the election
+// within about a second of the store returning; while the store is down
+// each controller sends one failed request per interval.
+constexpr Duration CONTEND_RETRY_INTERVAL = Seconds(1);
+
 // Default number of tasks (limit) for /controller/tasks endpoint.
 constexpr size_t TASK_LIMIT = 100;
 
