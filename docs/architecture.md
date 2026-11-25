@@ -26,7 +26,7 @@ A controller restart is a reconnection flow, not a recovery-of-state flow (DR-01
 
 What does not survive, by design: outstanding offers — including gang grants (#323). Frameworks re-request; a framework that recovers by re-requesting and resuming from its own checkpoint relies on exactly this.
 
-Single-controller durability via `leveldb` plus a supervisor (systemd restart, cloud instance auto-restart) is the simplest deployment posture; standby controllers behind an etcd election (above) add automatic failover on top of the same contract. Custom election schemes plug in via the `--controller_contender`/`--controller_detector` module seam.
+Single-controller durability via `leveldb` plus a supervisor (systemd restart, cloud instance auto-restart) is the simplest deployment posture; standby controllers behind an etcd election (above) add automatic failover on top of the same contract. Custom election schemes plug in via the `--controller_contender`/`--controller_detector` module seam. Deployment configurations for HA, from a single host to an enterprise network, are in [medios-high-availability.md](medios-high-availability.md).
 
 ## Scheduler API
 
