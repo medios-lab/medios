@@ -1,0 +1,59 @@
+#!/bin/sh
+# build-bundle: package try/bundle as medios-try-<rev>.tar.gz with the Medios
+# Python SDK wheel vendored in, and fill in the entry text the setup URL serves.
+#
+#   try/build-bundle <sdk-checkout> <out-dir> <bundle-base-url> [<release-base-url>]
+#
+# <sdk-checkout>     a clean checkout of medios-lab/medios-sdk-python at the
+#                    commit the bundle pins
+# <out-dir>          where the tarball, its .sha256 and index.txt are written
+# <bundle-base-url>  the URL the tarball will be downloaded from, without the
+#                    file name (the release asset location)
+# <release-base-url> optional: where the Medios release archives are fetched
+#                    from, replacing download_base in release.json; test
+#                    bundles point it at a local or tailnet file server. The
+#                    revision then carries a "-test" suffix.
+#
+# The revision is the short commit of the last change under try/, plus the SDK
+# commit, so a trial's recorded revision names both.
+set -eu
+
+[ $# -eq 3 ] || [ $# -eq 4 ] || {
+  echo "usage: $0 <sdk-checkout> <out-dir> <bundle-base-url> [<release-base-url>]" >&2; exit 2; }
+sdk=$(cd "$1" && pwd)
+out=$(mkdir -p "$2" && cd "$2" && pwd)
+base_url=${3%/}
+release_base=${4:-}
+here=$(cd "$(dirname "$0")" && pwd)
+
+[ -z "$(git -C "$here" status --porcelain -- .)" ] || { echo "try/ has uncommitted changes" >&2; exit 1; }
+[ -z "$(git -C "$sdk" status --porcelain)" ] || { echo "$sdk has uncommitted changes" >&2; exit 1; }
+
+try_rev=$(git -C "$here" log -1 --format=%h -- .)
+sdk_rev=$(git -C "$sdk" rev-parse --short HEAD)
+rev="$try_rev-sdk$sdk_rev${release_base:+-test}"
+name="medios-try-$rev.tar.gz"
+
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+cp -R "$here/bundle" "$stage/medios-try"
+rm -rf "$stage/medios-try/state"
+if [ -n "$release_base" ]; then
+  sed -i.bak "s|\"download_base\": \"[^\"]*\"|\"download_base\": \"${release_base%/}\"|" \
+    "$stage/medios-try/release.json"
+  rm "$stage/medios-try/release.json.bak"
+fi
+echo "$rev" > "$stage/medios-try/REVISION"
+mkdir -p "$stage/medios-try/vendor"
+uv build --quiet --wheel --out-dir "$stage/medios-try/vendor" "$sdk"
+
+tar -czf "$out/$name" -C "$stage" medios-try
+sha=$(shasum -a 256 "$out/$name" | cut -d' ' -f1)
+echo "$sha  $name" > "$out/$name.sha256"
+
+sed -e "s|@REVISION@|$rev|g" -e "s|@BUNDLE_URL@|$base_url/$name|g" \
+    -e "s|@SHA256@|$sha|g" -e "s|@BUNDLE_NAME@|$name|g" \
+    "$here/index.txt.in" > "$out/index.txt"
+
+printf '{"ok":true,"revision":"%s","bundle":"%s","sha256":"%s","index":"%s"}\n' \
+  "$rev" "$out/$name" "$sha" "$out/index.txt"
