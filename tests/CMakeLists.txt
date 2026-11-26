@@ -364,6 +364,23 @@ gtest_discover_tests(test_process_limits
   PROPERTIES TIMEOUT 60
 )
 
+# --- Node --launcher default for a non-root user (medios#35) ---
+add_executable(test_launcher_default
+  launcher_default_tests.cpp
+)
+target_link_libraries(test_launcher_default
+  PRIVATE
+    medios
+    GTest::gtest_main
+)
+target_include_directories(test_launcher_default
+  PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/include
+)
+gtest_discover_tests(test_launcher_default
+  DISCOVERY_TIMEOUT 10
+  PROPERTIES TIMEOUT 60
+)
+
 # --- filesystem/linux isolator tests (medios#459) ---
 add_executable(test_filesystem_linux
   filesystem_linux_tests.cpp
