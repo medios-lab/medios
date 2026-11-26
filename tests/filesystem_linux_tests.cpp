@@ -1057,6 +1057,7 @@ TEST_F(MediosTest, ARefusedStoreVolumeOnACommandCarriesTheIsolatorsSentence)
 
   node::Flags flags = CreateNodeFlags();
   flags.isolation = "filesystem/linux";
+  flags.launcher = "linux";
   flags.stores = storesFile;
 
   Owned<ControllerDetector> detector = controller.get()->createDetector();

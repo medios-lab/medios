@@ -34,6 +34,8 @@
 #include "node/constants.hpp"
 
 #ifdef __linux__
+#include <unistd.h>
+
 #include "node/containerizer/medios/linux_launcher.hpp"
 
 #include "linux/cgroups2.hpp"
@@ -142,9 +144,11 @@ medios::internal::node::Flags::Flags()
       "The launcher to be used for Medios containerizer. It could either be\n"
       "`linux` or `posix`. The Linux launcher is required for cgroups\n"
       "isolation. If unspecified, the node will choose the Linux launcher\n"
-      "if it's running as root on Linux.",
+      "if it's running as root on Linux with cgroups available, and the\n"
+      "posix launcher otherwise, including for a non-root user on a\n"
+      "cgroup v2 host.",
 #ifdef __linux__
-      LinuxLauncher::available() ? "linux" : "posix"
+      ::geteuid() == 0 && LinuxLauncher::available() ? "linux" : "posix"
 #else
       "posix"
 #endif // __linux__
