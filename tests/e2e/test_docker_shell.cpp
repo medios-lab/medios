@@ -402,13 +402,12 @@ TEST_F(ContainerizerContractTest, BareShellTaskUnderDockerShellRejectedAsTaskErr
 }
 
 
-// ----------------- #215: ContainerInfo.volumes bind mount -----------------
+// ----------------- ContainerInfo.volumes: host paths -----------------
 
-// Container reads a file the host wrote into a bind-mounted host directory,
-// and writes its own file back. Host verifies both the read and the write.
-// This is the canonical bind-mount use case (workspace shared across stages
-// in a pipeline framework).
-TEST_F(DockerShellTest, DOCKER_VolumeHostPathBindMountReadAndWrite)
+// A task names a directory on the host as a volume. The controller refuses
+// the task with TASK_ERROR and a message naming the accepted source type
+// (DR-036); the container never starts and the host directory is untouched.
+TEST_F(DockerShellTest, DOCKER_HostPathVolumeRefusedAsTaskError)
 {
   const int controllerPort = startController();
   ASSERT_GT(controllerPort, 0) << controllerLogs;
@@ -417,150 +416,28 @@ TEST_F(DockerShellTest, DOCKER_VolumeHostPathBindMountReadAndWrite)
         "--launcher_dir=" + launcherDir()
       })) << nodeLogs;
 
-  // Pre-stage a host directory the container will see.
   const auto hostShare = testRoot() / "vol-share";
   std::filesystem::remove_all(hostShare);
   std::filesystem::create_directories(hostShare);
-  {
-    std::ofstream f(hostShare / "from-host.txt");
-    f << "HELLO-FROM-HOST";
-  }
-
-  const std::string hostPath = hostShare.string();
-  const std::string containerPath = "/work";
-
-  auto task = writeTaskJson(std::string(R"({
-  "name": "vol-rw",
-  "task_id": {"value": "vol-rw-001"},
-  "node_id": {"value": ""},
-  "resources": [
-    {"name": "cpus", "type": "SCALAR", "scalar": {"value": 0.5}},
-    {"name": "mem",  "type": "SCALAR", "scalar": {"value": 128}}
-  ],
-  "command": {"shell": true,
-              "value": "cat /work/from-host.txt && echo HELLO-FROM-CONTAINER > /work/from-container.txt"},
-  "container": {
-    "type": "DOCKER",
-    "docker": {"image": "alpine:latest"},
-    "volumes": [
-      {"host_path": ")") + hostPath + R"(", "container_path": "/work", "mode": "RW"}
-    ]
-  }
-})", "vol-rw");
-
-  string output;
-  const int exitCode = runMediosExecute(controllerPort, {
-        "--task=file://" + task.string()
-      }, output);
-
-  const auto diag = [&]() {
-    return "--- medios-execute (exit " + std::to_string(exitCode) + ") ---\n"
-         + output + "\n--- node ---\n" + nodeLogs;
-  };
-
-  ASSERT_NE(string::npos, output.find("TASK_FINISHED")) << diag();
-
-  // Host can read what the container wrote.
-  const auto containerWrote = hostShare / "from-container.txt";
-  ASSERT_TRUE(std::filesystem::exists(containerWrote))
-      << "container did not write to bind-mounted volume:\n" << diag();
-  std::ifstream f(containerWrote);
-  std::string contents((std::istreambuf_iterator<char>(f)),
-                       std::istreambuf_iterator<char>());
-  EXPECT_NE(string::npos, contents.find("HELLO-FROM-CONTAINER"))
-      << "unexpected content in container-written file: '" << contents
-      << "'\n" << diag();
-
-  std::filesystem::remove_all(hostShare);
-}
-
-
-// Read-only mode: container can read but writes fail.
-TEST_F(DockerShellTest, DOCKER_VolumeReadOnlyModeBlocksContainerWrites)
-{
-  const int controllerPort = startController();
-  ASSERT_GT(controllerPort, 0) << controllerLogs;
-  ASSERT_TRUE(startNode(controllerPort, {
-        "--containerizers=docker_shell",
-        "--launcher_dir=" + launcherDir()
-      })) << nodeLogs;
-
-  const auto hostShare = testRoot() / "vol-share-ro";
-  std::filesystem::remove_all(hostShare);
-  std::filesystem::create_directories(hostShare);
-  {
-    std::ofstream f(hostShare / "readable.txt");
-    f << "READ-ONLY-CONTENT";
-  }
 
   auto task = writeTaskJson(std::string(R"json({
-  "name": "vol-ro",
-  "task_id": {"value": "vol-ro-001"},
+  "name": "vol-host-path",
+  "task_id": {"value": "vol-host-path-001"},
   "node_id": {"value": ""},
   "resources": [
     {"name": "cpus", "type": "SCALAR", "scalar": {"value": 0.5}},
     {"name": "mem",  "type": "SCALAR", "scalar": {"value": 128}}
   ],
   "command": {"shell": true,
-              "value": "cat /work/readable.txt && (echo nope > /work/forbidden.txt && exit 100 || exit 0)"},
+              "value": "echo HELLO-FROM-CONTAINER > /work/from-container.txt"},
   "container": {
     "type": "DOCKER",
     "docker": {"image": "alpine:latest"},
     "volumes": [
-      {"host_path": ")json") + hostShare.string() + R"json(", "container_path": "/work", "mode": "RO"}
+      {"host_path": ")json") + hostShare.string() + R"json(", "container_path": "/work", "mode": "RW"}
     ]
   }
-})json", "vol-ro");
-
-  string output;
-  const int exitCode = runMediosExecute(controllerPort, {
-        "--task=file://" + task.string()
-      }, output);
-
-  const auto diag = [&]() {
-    return "--- medios-execute (exit " + std::to_string(exitCode) + ") ---\n"
-         + output + "\n--- node ---\n" + nodeLogs;
-  };
-
-  ASSERT_NE(string::npos, output.find("TASK_FINISHED")) << diag();
-
-  // Host file was not modified — container's write attempt was blocked.
-  EXPECT_FALSE(std::filesystem::exists(hostShare / "forbidden.txt"))
-      << "RO mount allowed container write:\n" << diag();
-
-  std::filesystem::remove_all(hostShare);
-}
-
-
-// Relative host_path is out of contract — executor rejects with TASK_ERROR
-// + REASON_TASK_INVALID + a message naming the constraint, before any
-// docker invocation. No silent normalization to sandbox-relative.
-TEST_F(DockerShellTest, DOCKER_VolumeRelativeHostPathRejectedAsTaskError)
-{
-  const int controllerPort = startController();
-  ASSERT_GT(controllerPort, 0) << controllerLogs;
-  ASSERT_TRUE(startNode(controllerPort, {
-        "--containerizers=docker_shell",
-        "--launcher_dir=" + launcherDir()
-      })) << nodeLogs;
-
-  auto task = writeTaskJson(R"({
-  "name": "vol-relative",
-  "task_id": {"value": "vol-relative-001"},
-  "node_id": {"value": ""},
-  "resources": [
-    {"name": "cpus", "type": "SCALAR", "scalar": {"value": 0.5}},
-    {"name": "mem",  "type": "SCALAR", "scalar": {"value": 128}}
-  ],
-  "command": {"shell": true, "value": "echo unreachable"},
-  "container": {
-    "type": "DOCKER",
-    "docker": {"image": "alpine:latest"},
-    "volumes": [
-      {"host_path": "relative/path", "container_path": "/work", "mode": "RW"}
-    ]
-  }
-})", "vol-relative");
+})json", "vol-host-path");
 
   string output;
   const int exitCode = runMediosExecute(controllerPort, {
@@ -573,14 +450,20 @@ TEST_F(DockerShellTest, DOCKER_VolumeRelativeHostPathRejectedAsTaskError)
   };
 
   EXPECT_NE(string::npos, output.find("TASK_ERROR")) << diag();
-  EXPECT_NE(string::npos, output.find("REASON_TASK_INVALID")) << diag();
-  EXPECT_NE(string::npos, output.find("absolute"))
-      << "message should name the absolute-path requirement:\n" << diag();
+  EXPECT_NE(string::npos, output.find("only STORE volumes are accepted"))
+      << "message should name the accepted source type:\n" << diag();
 
+  EXPECT_EQ(string::npos, output.find("TASK_STARTING"))
+      << "refused task must not start:\n" << diag();
+  EXPECT_EQ(string::npos, output.find("TASK_RUNNING"))
+      << "refused task must not run:\n" << diag();
   EXPECT_EQ(string::npos, output.find("TASK_FINISHED"))
-      << "out-of-contract task must not run to FINISHED:\n" << diag();
-  EXPECT_EQ(string::npos, output.find("unreachable"))
-      << "the task command must not execute:\n" << diag();
+      << "refused task must not finish:\n" << diag();
+
+  EXPECT_FALSE(std::filesystem::exists(hostShare / "from-container.txt"))
+      << "refused task wrote to the host directory:\n" << diag();
+
+  std::filesystem::remove_all(hostShare);
 }
 
 
