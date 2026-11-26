@@ -411,6 +411,23 @@ gtest_discover_tests(test_filesystem_posix
     ENVIRONMENT "LIBPROCESS_IP=127.0.0.1"
 )
 
+# --- SECRET variables and volumes are refused at validation (medios#42) ---
+add_executable(test_secret_validation
+  secret_validation_tests.cpp
+)
+target_link_libraries(test_secret_validation
+  PRIVATE
+    medios
+    GTest::gtest_main
+)
+target_include_directories(test_secret_validation
+  PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/include
+)
+gtest_discover_tests(test_secret_validation
+  DISCOVERY_TIMEOUT 10
+  PROPERTIES TIMEOUT 60
+)
+
 # --- Controller tests (ported from legacy upstream tests, #111) ---
 add_executable(test_controller
   controller_tests.cpp

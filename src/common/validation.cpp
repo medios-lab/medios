@@ -170,7 +170,14 @@ Option<Error> validateEnvironment(const Environment& environment)
                 "secret containing null bytes, which is not allowed in the "
                 "environment");
         }
-        break;
+
+        // Nothing in this build resolves a secret into a task's environment
+        // (the environment secret isolator is not shipped, #43); the node
+        // would start the task without the variable.
+        return Error(
+            "Environment variable '" + variable.name() + "' is of type "
+            "'SECRET', which this build cannot deliver: no isolator resolves "
+            "secrets into a task's environment");
       }
 
       // NOTE: If new variable types are added in the future and an upgraded
@@ -253,7 +260,12 @@ Option<Error> validateVolume(const Volume& volume)
           return Error(
               "'source.secret' is not set for SECRET volume");
         }
-        break;
+
+        // Nothing in this build mounts a SECRET volume (the volume/secret
+        // isolator is not shipped, #43).
+        return Error(
+            "Volume '" + volume.container_path() + "' is a SECRET volume, "
+            "which this build cannot deliver: no isolator mounts secrets");
       case Volume::Source::STORE:
         if (!volume.source().has_store()) {
           return Error("'source.store' is not set for STORE volume");
