@@ -281,6 +281,69 @@ TEST_F(ControllerTest, DockerContainerTaskPassesControllerValidation)
 }
 
 
+// A task asking for a SECRET environment variable is refused at controller
+// validation with TASK_ERROR naming the variable, instead of launching
+// without it (#42).
+TEST_F(ControllerTest, SecretEnvironmentVariableIsRefused)
+{
+  Try<Owned<cluster::Controller>> controller = StartController();
+  ASSERT_SOME(controller);
+
+  Owned<ControllerDetector> detector = controller.get()->createDetector();
+  Try<Owned<cluster::Node>> node = StartNode(detector.get());
+  ASSERT_SOME(node);
+
+  MockScheduler sched;
+  MediosSchedulerDriver driver(
+      &sched, DEFAULT_FRAMEWORK_INFO, controller.get()->pid, DEFAULT_CREDENTIAL);
+
+  EXPECT_CALL(sched, registered(&driver, _, _));
+
+  Future<vector<Offer>> offers;
+  EXPECT_CALL(sched, resourceOffers(&driver, _))
+    .WillOnce(FutureArg<1>(&offers))
+    .WillRepeatedly(Return()); // Ignore subsequent offers.
+
+  driver.start();
+
+  AWAIT_READY(offers);
+  ASSERT_FALSE(offers->empty());
+
+  TaskInfo task;
+  task.set_name("secret-env");
+  task.set_principal(DEFAULT_TASK_PRINCIPAL);
+  task.mutable_task_id()->set_value("1");
+  task.mutable_node_id()->MergeFrom(offers.get()[0].node_id());
+  task.mutable_resources()->MergeFrom(offers.get()[0].resources());
+  task.mutable_command()->set_value("true");
+
+  Environment::Variable* variable =
+    task.mutable_command()->mutable_environment()->add_variables();
+  variable->set_name("MY_TOKEN");
+  variable->set_type(Environment::Variable::SECRET);
+  variable->mutable_secret()->set_type(Secret::VALUE);
+  variable->mutable_secret()->mutable_value()->set_data("unused");
+
+  Future<TaskStatus> status;
+  EXPECT_CALL(sched, statusUpdate(&driver, _))
+    .WillOnce(FutureArg<1>(&status));
+
+  driver.launchTasks(offers.get()[0].id(), {task});
+
+  AWAIT_READY(status);
+  EXPECT_EQ(TASK_ERROR, status->state());
+  EXPECT_EQ(TaskStatus::SOURCE_CONTROLLER, status->source());
+  EXPECT_EQ(TaskStatus::REASON_TASK_INVALID, status->reason());
+  EXPECT_TRUE(strings::contains(status->message(), "'MY_TOKEN'"))
+    << status->message();
+  EXPECT_TRUE(strings::contains(status->message(), "cannot deliver"))
+    << status->message();
+
+  driver.stop();
+  driver.join();
+}
+
+
 // A task group carrying a task-level DOCKER ContainerInfo is rejected at
 // controller validation: task groups run under the default executor, which
 // supports nested MEDIOS containers only.
