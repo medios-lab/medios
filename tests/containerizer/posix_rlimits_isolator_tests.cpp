@@ -67,6 +67,7 @@ TEST_F(PosixRLimitsIsolatorTest, InvalidLimits)
 
   node::Flags flags = CreateNodeFlags();
   flags.isolation = "posix/rlimits";
+  flags.launcher = "posix";
 
   Owned<ControllerDetector> detector = controller.get()->createDetector();
 
@@ -149,6 +150,7 @@ TEST_F(PosixRLimitsIsolatorTest, UnsetLimits)
 
   node::Flags flags = CreateNodeFlags();
   flags.isolation = "posix/rlimits";
+  flags.launcher = "posix";
 
   Owned<ControllerDetector> detector = controller.get()->createDetector();
 
@@ -235,6 +237,7 @@ TEST_F(PosixRLimitsIsolatorTest, BothSoftAndHardLimitSet)
 
   node::Flags flags = CreateNodeFlags();
   flags.isolation = "posix/rlimits";
+  flags.launcher = "posix";
 
   Owned<ControllerDetector> detector = controller.get()->createDetector();
 
@@ -302,6 +305,7 @@ TEST_F(PosixRLimitsIsolatorTest, TaskExceedingLimit)
 
   node::Flags flags = CreateNodeFlags();
   flags.isolation = "posix/rlimits";
+  flags.launcher = "posix";
 
   Owned<ControllerDetector> detector = controller.get()->createDetector();
 
@@ -382,6 +386,7 @@ TEST_F(PosixRLimitsIsolatorTest, NestedContainers)
 
   node::Flags flags = CreateNodeFlags();
   flags.isolation = "posix/rlimits";
+  flags.launcher = "posix";
 
   Owned<ControllerDetector> detector = controller.get()->createDetector();
 
