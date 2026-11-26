@@ -29,6 +29,7 @@
 #include <process/owned.hpp>
 
 #include <stout/check.hpp>
+#include <stout/duration.hpp>
 #include <stout/error.hpp>
 #include <stout/exit.hpp>
 #include <stout/foreach.hpp>
@@ -574,6 +575,19 @@ void Environment::TearDown()
   // TODO(jmlvanre): Consider doing this `OnTestEnd` in a listener so
   // that we can identify leaked processes more precisely.
   Try<os::ProcessTree> pstree = os::pstree(0);
+
+  // A child a test killed in its last statement is a zombie until
+  // libprocess reaps it, on a poll of at most one second. Two polls is
+  // the bound; a child still present after that was left running.
+  const Duration reapWait = Seconds(2);
+  const Duration step = Milliseconds(50);
+
+  for (Duration waited = Duration::zero();
+       waited < reapWait && pstree.isSome() && !pstree->children.empty();
+       waited += step) {
+    os::sleep(step);
+    pstree = os::pstree(0);
+  }
 
   if (pstree.isSome() && !pstree->children.empty()) {
     FAIL() << "Tests completed with child processes remaining:\n"

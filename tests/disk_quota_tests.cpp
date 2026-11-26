@@ -227,6 +227,10 @@ TEST_P(DiskQuotaEnforcement, DiskUsageExceedsQuota)
   flags.container_disk_watch_interval = Milliseconds(1);
   flags.enforce_container_disk_quota = true;
 
+  if (GetParam() == ParamDiskQuota::SANDBOX) {
+    flags.launcher = "posix";
+  }
+
   if (GetParam() == ParamDiskQuota::ROOTFS) {
     flags.isolation += ",filesystem/linux,docker/runtime";
 
@@ -321,6 +325,7 @@ TEST_F(DiskQuotaTest, VolumeUsageExceedsQuota)
 
   node::Flags nodeFlags = CreateNodeFlags();
   nodeFlags.isolation = "posix/cpu,posix/mem,disk/du";
+  nodeFlags.launcher = "posix";
 
   // NOTE: We can't pause the clock because we need the reaper to reap
   // the 'du' subprocess.
@@ -430,6 +435,10 @@ TEST_P(DiskQuotaEnforcement, NoQuotaEnforcement)
   // the 'du' subprocess.
   flags.container_disk_watch_interval = Milliseconds(1);
   flags.enforce_container_disk_quota = false;
+
+  if (GetParam() == ParamDiskQuota::SANDBOX) {
+    flags.launcher = "posix";
+  }
 
   if (GetParam() == ParamDiskQuota::ROOTFS) {
     flags.isolation += ",filesystem/linux,docker/runtime";
@@ -563,6 +572,10 @@ TEST_P(DiskQuotaEnforcement, ResourceStatistics)
   // NOTE: We can't pause the clock because we need the reaper to reap
   // the 'du' subprocess.
   flags.container_disk_watch_interval = Milliseconds(1);
+
+  if (GetParam() == ParamDiskQuota::SANDBOX) {
+    flags.launcher = "posix";
+  }
 
   if (GetParam() == ParamDiskQuota::ROOTFS) {
     flags.isolation += ",filesystem/linux,docker/runtime";
@@ -751,6 +764,10 @@ TEST_P(DiskQuotaEnforcement, NodeRecovery)
   node::Flags flags = CreateNodeFlags();
   flags.isolation = "posix/cpu,posix/mem,disk/du";
   flags.container_disk_watch_interval = Milliseconds(1);
+
+  if (GetParam() == ParamDiskQuota::SANDBOX) {
+    flags.launcher = "posix";
+  }
 
   if (GetParam() == ParamDiskQuota::ROOTFS) {
     flags.isolation += ",filesystem/linux,docker/runtime";
