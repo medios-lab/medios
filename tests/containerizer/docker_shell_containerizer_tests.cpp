@@ -60,7 +60,7 @@ protected:
     launcherDir = dir.get();
 
     const string stub = path::join(launcherDir, "medios-docker-executor");
-    ASSERT_SOME(os::write(stub, "#!/bin/sh\nsleep 300\n"));
+    ASSERT_SOME(os::write(stub, "#!/bin/sh\nexec sleep 300\n"));
     ASSERT_SOME(os::chmod(stub, 0755));
   }
 
@@ -162,7 +162,7 @@ protected:
         "#!/bin/sh\n"
         "printf '%s' \"$MEDIOS_DOCKER_GPU_DEVICES\" > \"" + launcherDir +
         "/devices.$$\"\n"
-        "sleep 300\n"));
+        "exec sleep 300\n"));
   }
 
   medios::node::ContainerConfig gpuConfig(double gpus) const
