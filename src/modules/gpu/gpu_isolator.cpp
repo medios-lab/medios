@@ -17,17 +17,18 @@
 //   com_medioslab_medios_gpu_assign   Decides at prepare() which devices serve
 //                                     the container's claim, checkpoints that
 //                                     assignment, and sets CUDA_VISIBLE_DEVICES
-//                                     to it. Releases whole devices at
-//                                     cleanup(). Needs NVML and a units file,
-//                                     and nothing from the cgroup hierarchy.
+//                                     to it. For a container with its own
+//                                     rootfs, also binds the assigned devices'
+//                                     files and the driver libraries into it.
+//                                     Releases whole devices at cleanup().
+//                                     Needs NVML and a units file, and nothing
+//                                     from the cgroup hierarchy.
 //
 //   com_medioslab_medios_gpu_devices  Reads that assignment back at prepare()
 //                                     and declares the device files the
 //                                     container may open, which the
 //                                     containerizer grants through
-//                                     cgroups/devices (medios#455). Also
-//                                     injects the driver libraries into a
-//                                     container that brought its own image.
+//                                     cgroups/devices (medios#455).
 //
 // A node that cannot create cgroups lists the first alone. A node that can
 // lists both, assign first: the containerizer runs isolator prepare() calls
@@ -140,9 +141,10 @@ public:
   // of the resource each of them provides (DR-035). The module knows no
   // resource name it was not given, so a node declaring `gpus` and a node
   // declaring something else are the same code with a different units file.
-  explicit GpuAssignIsolator(
-      const std::map<std::string, medios::modules::gpu::UnitSet>& _units)
-    : units(_units) {}
+  GpuAssignIsolator(
+      const std::map<std::string, medios::modules::gpu::UnitSet>& _units,
+      const Option<medios::internal::node::NvidiaVolume>& _volume)
+    : units(_units), volume(_volume) {}
 
   // Containers that outlived the node process. The module keeps what it
   // assigned in memory and checkpoints it under each container's own
@@ -351,6 +353,24 @@ public:
       *launchInfo.mutable_environment() = environment;
     }
 
+    // A container with its own rootfs gets a private /dev that holds only the
+    // standard device nodes, and its image's libraries in place of the
+    // host's. CUDA in it needs the assigned devices' files and the driver
+    // libraries, and the device isolator is not always listed, so both are
+    // bound in here. A container without a rootfs sees the host's /dev and
+    // libraries and needs neither.
+    if (containerConfig.has_rootfs()) {
+      Try<Nothing> delivered =
+        deliverIntoRootfs(containerConfig, granted, &launchInfo);
+      if (delivered.isError()) {
+        // The assignment is recorded in `allocations`, so cleanup(), which
+        // the containerizer runs after a failed prepare(), releases it.
+        return process::Failure(
+            std::string(ASSIGN_MODULE) + ": container " +
+            stringify(containerId) + ": " + delivered.error());
+      }
+    }
+
     // The UUIDs, because the count alone cannot say which device a container
     // is on: seat holders share a device, and on a node with several devices
     // the count is the same whichever one was placed (medios#482).
@@ -539,6 +559,97 @@ public:
   }
 
 private:
+  // Binds the files of the assigned devices, the driver control device and
+  // the unified-memory devices that exist on the host into the container's
+  // rootfs at their host paths, then injects the driver volume. The files
+  // are the ones the device isolator declares, so a node listing both
+  // isolators grants access to exactly the files bound here.
+  Try<Nothing> deliverIntoRootfs(
+      const ContainerConfig& containerConfig,
+      const std::vector<medios::modules::gpu::Device>& granted,
+      ContainerLaunchInfo* launchInfo)
+  {
+    Try<std::vector<DeviceAccess>> files =
+      medios::modules::gpu::deviceDeclarations(granted, [](const std::string& path) {
+        return os::exists(path);
+      });
+
+    if (files.isError()) {
+      return Error(files.error());
+    }
+
+    foreach (const medios::modules::gpu::DeviceMount& mount,
+             medios::modules::gpu::deviceMounts(*files, containerConfig.rootfs())) {
+      *launchInfo->add_mounts() =
+        medios::internal::protobuf::node::createContainerMount(
+            mount.source, mount.target, MS_BIND);
+    }
+
+    return injectVolume(containerConfig, launchInfo);
+  }
+
+  // Mounts the driver volume read-only into the container's rootfs and puts
+  // its directories on PATH and LD_LIBRARY_PATH. Nothing is injected when the
+  // volume could not be created at load, or for an image the volume declines.
+  Try<Nothing> injectVolume(
+      const ContainerConfig& containerConfig,
+      ContainerLaunchInfo* launchInfo)
+  {
+    if (volume.isNone()) {
+      return Nothing();
+    }
+
+    // Only a Docker image carries the manifest the volume inspects. A
+    // container with a rootfs from elsewhere is left alone rather than
+    // refused: its device files are bound in, and whether its own libraries
+    // suffice depends on its image.
+    if (!containerConfig.has_docker() ||
+        !containerConfig.docker().has_manifest()) {
+      LOG(INFO) << "GPU module: no Docker manifest for this container; "
+                << "driver libraries were not injected";
+      return Nothing();
+    }
+
+    const ::docker::spec::v1::ImageManifest manifest =
+      containerConfig.docker().manifest();
+
+    if (!volume->shouldInject(manifest)) {
+      return Nothing();
+    }
+
+    const std::string target =
+      path::join(containerConfig.rootfs(), volume->CONTAINER_PATH());
+
+    Try<Nothing> mkdir = os::mkdir(target);
+    if (mkdir.isError()) {
+      return Error(
+          "Failed to create the driver volume directory at '" + target +
+          "': " + mkdir.error());
+    }
+
+    const std::vector<medios::modules::gpu::VolumeMount> mounts =
+      medios::modules::gpu::driverVolumeMounts(volume->HOST_PATH(), target);
+
+    foreach (const medios::modules::gpu::VolumeMount& mount, mounts) {
+      *launchInfo->add_mounts() =
+        medios::internal::protobuf::node::createContainerMount(
+            mount.source,
+            mount.target,
+            medios::modules::gpu::volumeMountFlags(mount.mode));
+    }
+
+    // Added to the environment that already holds CUDA_VISIBLE_DEVICES, in
+    // the same place prepare() put it: the task environment for a command
+    // executor, the container environment otherwise.
+    if (containerConfig.has_task_info()) {
+      launchInfo->mutable_task_environment()->MergeFrom(volume->ENV(manifest));
+    } else {
+      launchInfo->mutable_environment()->MergeFrom(volume->ENV(manifest));
+    }
+
+    return Nothing();
+  }
+
   // What a container holds: the resource it asked for, how much of it core
   // charged the container, and the devices that claim was placed on. The
   // resource name is kept because update() has to read the same unit
@@ -555,6 +666,7 @@ private:
   };
 
   const std::map<std::string, medios::modules::gpu::UnitSet> units;
+  const Option<medios::internal::node::NvidiaVolume> volume;
 
   std::mutex mutex;
   // Keyed by the serialised id: ContainerID has no ordering, and a nested
@@ -583,10 +695,9 @@ private:
 class GpuDevicesIsolator : public Isolator
 {
 public:
-  GpuDevicesIsolator(
-      const std::map<std::string, medios::modules::gpu::UnitSet>& _units,
-      const Option<medios::internal::node::NvidiaVolume>& _volume)
-    : units(_units), volume(_volume) {}
+  explicit GpuDevicesIsolator(
+      const std::map<std::string, medios::modules::gpu::UnitSet>& _units)
+    : units(_units) {}
 
   process::Future<Option<ContainerLaunchInfo>> prepare(
       const ContainerID& containerId,
@@ -651,13 +762,12 @@ public:
           ". Give both GPU isolators the same units file.");
     }
 
-    return declare(containerId, containerConfig, assigned.resource, *granted);
+    return declare(containerId, assigned.resource, *granted);
   }
 
 private:
   process::Future<Option<ContainerLaunchInfo>> declare(
       const ContainerID& containerId,
-      const ContainerConfig& containerConfig,
       const std::string& resource,
       const std::vector<medios::modules::gpu::Device>& granted)
   {
@@ -675,111 +785,16 @@ private:
       *launchInfo.add_devices() = declaration;
     }
 
-    // A container with its own filesystem gets a private /dev holding only the
-    // standard nodes, so the declarations above would grant it the right to
-    // open device files that are not there. Bind the host's nodes in at the
-    // paths the declarations name. A container without a rootfs sees the
-    // host's /dev already and needs none of this.
-    if (containerConfig.has_rootfs()) {
-      const std::vector<medios::modules::gpu::DeviceMount> mounts =
-        medios::modules::gpu::deviceMounts(
-            *declarations, containerConfig.rootfs());
-
-      foreach (const medios::modules::gpu::DeviceMount& mount, mounts) {
-        *launchInfo.add_mounts() =
-          medios::internal::protobuf::node::createContainerMount(
-              mount.source, mount.target, MS_BIND);
-      }
-    }
-
-    // The driver libraries, for a container whose image replaced the
-    // filesystem. Deliberately independent of the device declarations above:
-    // the in-tree isolator returns early when there is no rootfs, but it
-    // grants devices from update() rather than from prepare(), so returning
-    // early here would have left such a container with no device access at
-    // all. A container without a rootfs sees the host's libraries already and
-    // needs no injection; it still needs its devices.
-    Try<Nothing> injected = injectVolume(containerConfig, &launchInfo);
-    if (injected.isError()) {
-      return process::Failure(injected.error());
-    }
-
+    // The declarations only grant access. For a container with its own
+    // rootfs, the assignment isolator has already bound these files into it.
     LOG(INFO) << "GPU module: container " << containerId << " declared "
               << declarations->size() << " device file(s) for its "
-              << granted.size() << " '" << resource << "' device(s); "
-              << (containerConfig.has_rootfs()
-                    ? "bound them into its rootfs"
-                    : "no rootfs, so it uses the host's /dev");
+              << granted.size() << " '" << resource << "' device(s)";
 
     return launchInfo;
   }
 
-  // Mounts the driver volume read-only into the container and puts its
-  // directories on PATH and LD_LIBRARY_PATH. Nothing is injected for a
-  // container that has no image of its own, or for an image the volume
-  // declines.
-  Try<Nothing> injectVolume(
-      const ContainerConfig& containerConfig,
-      ContainerLaunchInfo* launchInfo)
-  {
-    if (volume.isNone() || !containerConfig.has_rootfs()) {
-      return Nothing();
-    }
-
-    // Only a Docker image carries the manifest the volume inspects. A
-    // container with a rootfs from elsewhere is left alone rather than
-    // refused: it has its devices, and whether its libraries suffice is its
-    // own business.
-    if (!containerConfig.has_docker() ||
-        !containerConfig.docker().has_manifest()) {
-      LOG(INFO) << "GPU module: no Docker manifest for this container; "
-                << "driver libraries were not injected";
-      return Nothing();
-    }
-
-    const ::docker::spec::v1::ImageManifest manifest =
-      containerConfig.docker().manifest();
-
-    if (!volume->shouldInject(manifest)) {
-      return Nothing();
-    }
-
-    const std::string target =
-      path::join(containerConfig.rootfs(), volume->CONTAINER_PATH());
-
-    Try<Nothing> mkdir = os::mkdir(target);
-    if (mkdir.isError()) {
-      return Error(
-          "Failed to create the driver volume directory at '" + target +
-          "': " + mkdir.error());
-    }
-
-    const std::vector<medios::modules::gpu::VolumeMount> mounts =
-      medios::modules::gpu::driverVolumeMounts(volume->HOST_PATH(), target);
-
-    foreach (const medios::modules::gpu::VolumeMount& mount, mounts) {
-      *launchInfo->add_mounts() =
-        medios::internal::protobuf::node::createContainerMount(
-            mount.source,
-            mount.target,
-            medios::modules::gpu::volumeMountFlags(mount.mode));
-    }
-
-    // A command executor reads the task environment; everything else reads
-    // the container environment. Same split the in-tree isolator makes. The
-    // containerizer merges every isolator's launch info, so these variables
-    // sit beside the assignment isolator's CUDA_VISIBLE_DEVICES.
-    if (containerConfig.has_task_info()) {
-      *launchInfo->mutable_task_environment() = volume->ENV(manifest);
-    } else {
-      *launchInfo->mutable_environment() = volume->ENV(manifest);
-    }
-
-    return Nothing();
-  }
-
   const std::map<std::string, medios::modules::gpu::UnitSet> units;
-  const Option<medios::internal::node::NvidiaVolume> volume;
 };
 #else
 // Elsewhere: load, discover, deliver nothing.
@@ -907,7 +922,24 @@ static Isolator* createAssign(const Parameters& parameters)
   }
 
 #ifdef __linux__
-  return new mediosgpu::GpuAssignIsolator(loaded->byResource);
+  // The driver volume holds the libraries a container with its own image
+  // needs. Its absence is logged and does not refuse the load: assignment
+  // does not depend on it, and a container without its own rootfs uses the
+  // host's libraries.
+  Option<medios::internal::node::NvidiaVolume> volume;
+
+  Try<medios::internal::node::NvidiaVolume> created =
+    medios::internal::node::NvidiaVolume::create();
+
+  if (created.isError()) {
+    LOG(WARNING) << mediosgpu::ASSIGN_MODULE << ": the driver volume is "
+                 << "unavailable: " << created.error()
+                 << "; containers with their own rootfs will get no driver libraries";
+  } else {
+    volume = *created;
+  }
+
+  return new mediosgpu::GpuAssignIsolator(loaded->byResource, volume);
 #else
   return new mediosgpu::GpuAssignIsolator(loaded->discovered);
 #endif // __linux__
@@ -928,24 +960,7 @@ static Isolator* createDevices(const Parameters& parameters)
   }
 
 #ifdef __linux__
-  // The driver volume is what a container with its own image needs to find
-  // the libraries. Its absence is logged and does not refuse the load: device
-  // access does not depend on it, and a container without an image of its own
-  // never needed it.
-  Option<medios::internal::node::NvidiaVolume> volume;
-
-  Try<medios::internal::node::NvidiaVolume> created =
-    medios::internal::node::NvidiaVolume::create();
-
-  if (created.isError()) {
-    LOG(WARNING) << mediosgpu::DEVICES_MODULE << ": the driver volume is "
-                 << "unavailable: " << created.error()
-                 << "; devices will be granted without injected libraries";
-  } else {
-    volume = *created;
-  }
-
-  return new mediosgpu::GpuDevicesIsolator(loaded->byResource, volume);
+  return new mediosgpu::GpuDevicesIsolator(loaded->byResource);
 #else
   return new mediosgpu::GpuDevicesIsolator(loaded->discovered);
 #endif // __linux__

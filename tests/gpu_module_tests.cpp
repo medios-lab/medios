@@ -13,6 +13,7 @@
 #include <sys/mount.h>
 #endif // __linux__
 
+#include <map>
 #include <string>
 
 #include <gmock/gmock.h>
@@ -253,6 +254,8 @@ TEST_F(GpuModuleTest, AssignThenDevicesHandsTheAssignmentAcross)
   EXPECT_EQ("CUDA_VISIBLE_DEVICES", assignInfo.environment().variables(0).name());
   EXPECT_EQ(device.uuid, assignInfo.environment().variables(0).value());
   EXPECT_EQ(0, assignInfo.devices_size());
+  // No rootfs, so the container uses the host's /dev and nothing is bound.
+  EXPECT_EQ(0, assignInfo.mounts_size());
 
   Future<Option<medios::node::ContainerLaunchInfo>> declared =
     devices->prepare(containerId, config);
@@ -265,6 +268,7 @@ TEST_F(GpuModuleTest, AssignThenDevicesHandsTheAssignmentAcross)
   }
   EXPECT_EQ(1u, paths.count(medios::modules::gpu::devicePath(device)));
   EXPECT_EQ(1u, paths.count("/dev/nvidiactl"));
+  EXPECT_EQ(0, declared->get().mounts_size());
   // The variable is assign's alone; devices sets no environment for a
   // container without a rootfs, since no driver volume is injected.
   EXPECT_EQ(0, declared->get().environment().variables_size());
@@ -293,6 +297,73 @@ TEST_F(GpuModuleTest, AssignThenDevicesHandsTheAssignmentAcross)
     devices->prepare(backwardsId, plain);
   AWAIT_READY(untouched);
   EXPECT_NONE(untouched.get());
+
+  AWAIT_READY(assign->cleanup(containerId));
+}
+
+
+// A container with its own rootfs has a private /dev with no GPU device
+// files. On a node that lists only the assignment isolator, the launch info
+// must bind the assigned device's file and the driver control device into
+// the rootfs at their host paths, and must declare no device access.
+//
+// The config carries no Docker manifest, so no driver volume is injected and
+// the mounts are the device files alone. Skipped without a GPU, because the
+// isolator is created only over a units file whose devices NVML reports on
+// this host.
+TEST_F(GpuModuleTest, AssignBindsTheDeviceFilesIntoARootfs)
+{
+  const Option<string> units = writeUnitsFileForThisHost();
+  if (units.isNone()) {
+    GTEST_SKIP() << "No GPU on this host; covered by a run on a GPU host.";
+  }
+
+  std::unique_ptr<medios::modules::gpu::DeviceSource> source =
+    medios::modules::gpu::nvmlDeviceSource();
+  Try<vector<medios::modules::gpu::Device>> host =
+    medios::modules::gpu::discover(*source);
+  ASSERT_SOME(host);
+  const medios::modules::gpu::Device& device = host->at(0);
+
+  ASSERT_SOME(ModuleManager::load(gpuModules(*units)));
+
+  Try<Isolator*> created = ModuleManager::create<Isolator>(GPU_MODULE_NAME);
+  ASSERT_SOME(created);
+  Owned<Isolator> assign(created.get());
+
+  const string directory = path::join(os::getcwd(), "container");
+  ASSERT_SOME(os::mkdir(directory));
+  const string rootfs = path::join(os::getcwd(), "rootfs");
+  ASSERT_SOME(os::mkdir(rootfs));
+
+  medios::node::ContainerConfig config;
+  config.set_directory(directory);
+  config.set_rootfs(rootfs);
+  config.mutable_command_info()->set_value("true");
+  config.mutable_resources()->CopyFrom(
+      medios::Resources::parse("cpus:1;gpus:1").get());
+
+  medios::ContainerID containerId;
+  containerId.set_value("image-container");
+
+  Future<Option<medios::node::ContainerLaunchInfo>> assigned =
+    assign->prepare(containerId, config);
+  AWAIT_READY(assigned);
+  ASSERT_SOME(assigned.get());
+
+  const medios::node::ContainerLaunchInfo& info = assigned->get();
+  EXPECT_EQ(0, info.devices_size());
+
+  std::map<string, string> targets;
+  foreach (const medios::node::ContainerMountInfo& mount, info.mounts()) {
+    targets[mount.source()] = mount.target();
+  }
+
+  const string file = medios::modules::gpu::devicePath(device);
+  ASSERT_EQ(1u, targets.count(file));
+  EXPECT_EQ(path::join(rootfs, file), targets[file]);
+  ASSERT_EQ(1u, targets.count("/dev/nvidiactl"));
+  EXPECT_EQ(path::join(rootfs, "/dev/nvidiactl"), targets["/dev/nvidiactl"]);
 
   AWAIT_READY(assign->cleanup(containerId));
 }
