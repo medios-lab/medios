@@ -592,16 +592,11 @@ public:
       const ContainerID& containerId,
       const ContainerConfig& containerConfig) override
   {
-    const std::vector<std::string> asked =
-      askedResources(units, containerConfig.resources());
-
-    // A container that asked for no GPUs gets no declarations at all, so a
-    // non-GPU container on a GPU node is untouched and the containerizer's
-    // empty short-circuit applies.
-    if (asked.empty()) {
-      return None();
-    }
-
+    // The checkpoint is read first, for every container. Deciding from this
+    // isolator's own units file whether a container asked for a GPU would
+    // skip a container the assignment isolator did assign when the two units
+    // files disagree, and that container would start with
+    // CUDA_VISIBLE_DEVICES naming a device it is not allowed to open.
     Try<Option<medios::modules::gpu::AllocationCheckpoint>> checkpoint =
       medios::modules::gpu::readAllocationCheckpoint(
           containerConfig.directory());
@@ -613,11 +608,21 @@ public:
           checkpoint.error());
     }
 
-    // A GPU container with no assignment is a node configured without the
-    // assignment isolator, or with it listed after this one. Declaring
-    // nothing would start a container the controller charged for a GPU it
-    // cannot open, so the launch is refused and the refusal names the fix.
     if (checkpoint->isNone()) {
+      const std::vector<std::string> asked =
+        askedResources(units, containerConfig.resources());
+
+      // No assignment and no GPU claim: a non-GPU container on a GPU node,
+      // which gets no declarations at all, so the containerizer's empty
+      // short-circuit applies.
+      if (asked.empty()) {
+        return None();
+      }
+
+      // A GPU claim with no assignment is a node configured without the
+      // assignment isolator, or with it listed after this one. Declaring
+      // nothing would start a container the controller charged for a GPU it
+      // cannot open, so the launch is refused and the refusal names the fix.
       return process::Failure(
           std::string(DEVICES_MODULE) + ": container " +
           stringify(containerId) + " asked for '" + asked.front() + "' but no "

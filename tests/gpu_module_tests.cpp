@@ -21,6 +21,7 @@
 
 #include <medios/medios.hpp>
 #include <medios/module.hpp>
+#include <medios/resources.hpp>
 
 #include <medios/module/isolator.hpp>
 #include <medios/node/isolator.hpp>
@@ -182,6 +183,152 @@ TEST_F(GpuModuleTest, LoadsThroughModuleManager)
     ASSERT_SOME(isolator) << name;
     delete isolator.get();
   }
+}
+
+
+// A GPU container through both isolators, in --isolation order: assign
+// places the claim and sets CUDA_VISIBLE_DEVICES, devices reads the
+// checkpoint assign wrote and declares that device's file. A second container
+// prepared by devices alone, the order a node listing them backwards would
+// produce, is refused by name. Needs a GPU: the isolators are constructed
+// only over a units file this host can honour.
+TEST_F(GpuModuleTest, AssignThenDevicesHandsTheAssignmentAcross)
+{
+  const Option<string> units = writeUnitsFileForThisHost();
+  if (units.isNone()) {
+    GTEST_SKIP() << "No GPU on this host; covered by a run on a GPU host.";
+  }
+
+  std::unique_ptr<medios::modules::gpu::DeviceSource> source =
+    medios::modules::gpu::nvmlDeviceSource();
+  Try<vector<medios::modules::gpu::Device>> host =
+    medios::modules::gpu::discover(*source);
+  ASSERT_SOME(host);
+  const medios::modules::gpu::Device& device = host->at(0);
+
+  ASSERT_SOME(ModuleManager::load(
+      gpuModules(*units, {GPU_MODULE_NAME, GPU_DEVICES_MODULE_NAME})));
+
+  Try<Isolator*> assignCreated = ModuleManager::create<Isolator>(GPU_MODULE_NAME);
+  ASSERT_SOME(assignCreated);
+  Owned<Isolator> assign(assignCreated.get());
+
+  Try<Isolator*> devicesCreated =
+    ModuleManager::create<Isolator>(GPU_DEVICES_MODULE_NAME);
+  ASSERT_SOME(devicesCreated);
+  Owned<Isolator> devices(devicesCreated.get());
+
+  // A container with a GPU claim and no task, so the variable belongs in the
+  // container environment.
+  const string directory = path::join(os::getcwd(), "container");
+  ASSERT_SOME(os::mkdir(directory));
+
+  medios::node::ContainerConfig config;
+  config.set_directory(directory);
+  config.mutable_command_info()->set_value("true");
+  config.mutable_resources()->CopyFrom(
+      medios::Resources::parse("cpus:1;gpus:1").get());
+
+  medios::ContainerID containerId;
+  containerId.set_value("gpu-container");
+
+  Future<Option<medios::node::ContainerLaunchInfo>> assigned =
+    assign->prepare(containerId, config);
+  AWAIT_READY(assigned);
+  ASSERT_SOME(assigned.get());
+
+  const medios::node::ContainerLaunchInfo& assignInfo = assigned->get();
+  EXPECT_FALSE(assignInfo.has_task_environment());
+  ASSERT_EQ(1, assignInfo.environment().variables_size());
+  EXPECT_EQ("CUDA_VISIBLE_DEVICES", assignInfo.environment().variables(0).name());
+  EXPECT_EQ(device.uuid, assignInfo.environment().variables(0).value());
+  EXPECT_EQ(0, assignInfo.devices_size());
+
+  Future<Option<medios::node::ContainerLaunchInfo>> declared =
+    devices->prepare(containerId, config);
+  AWAIT_READY(declared);
+  ASSERT_SOME(declared.get());
+
+  std::set<string> paths;
+  foreach (const medios::DeviceAccess& access, declared->get().devices()) {
+    paths.insert(access.device().path());
+  }
+  EXPECT_EQ(1u, paths.count(medios::modules::gpu::devicePath(device)));
+  EXPECT_EQ(1u, paths.count("/dev/nvidiactl"));
+  // The variable is assign's alone; devices sets no environment for a
+  // container without a rootfs, since no driver volume is injected.
+  EXPECT_EQ(0, declared->get().environment().variables_size());
+
+  // Devices without assign before it: a fresh directory with no checkpoint.
+  const string unassigned = path::join(os::getcwd(), "unassigned");
+  ASSERT_SOME(os::mkdir(unassigned));
+
+  medios::node::ContainerConfig backwards = config;
+  backwards.set_directory(unassigned);
+
+  medios::ContainerID backwardsId;
+  backwardsId.set_value("backwards-container");
+
+  Future<Option<medios::node::ContainerLaunchInfo>> refused =
+    devices->prepare(backwardsId, backwards);
+  AWAIT_FAILED(refused);
+  EXPECT_TRUE(strings::contains(
+      refused.failure(), "List " + GPU_MODULE_NAME + " before")) << refused.failure();
+
+  // A container with no GPU claim and no checkpoint is untouched by both.
+  medios::node::ContainerConfig plain = backwards;
+  plain.mutable_resources()->CopyFrom(medios::Resources::parse("cpus:1").get());
+
+  Future<Option<medios::node::ContainerLaunchInfo>> untouched =
+    devices->prepare(backwardsId, plain);
+  AWAIT_READY(untouched);
+  EXPECT_NONE(untouched.get());
+
+  AWAIT_READY(assign->cleanup(containerId));
+}
+
+
+// A command task reads the task environment, so that is where assign puts
+// CUDA_VISIBLE_DEVICES when the container carries a task.
+TEST_F(GpuModuleTest, AssignPutsTheVariableInTheTaskEnvironmentOfACommandTask)
+{
+  const Option<string> units = writeUnitsFileForThisHost();
+  if (units.isNone()) {
+    GTEST_SKIP() << "No GPU on this host; covered by a run on a GPU host.";
+  }
+
+  ASSERT_SOME(ModuleManager::load(gpuModules(*units)));
+
+  Try<Isolator*> created = ModuleManager::create<Isolator>(GPU_MODULE_NAME);
+  ASSERT_SOME(created);
+  Owned<Isolator> assign(created.get());
+
+  const string directory = path::join(os::getcwd(), "task-container");
+  ASSERT_SOME(os::mkdir(directory));
+
+  medios::node::ContainerConfig config;
+  config.set_directory(directory);
+  config.mutable_command_info()->set_value("true");
+  config.mutable_resources()->CopyFrom(
+      medios::Resources::parse("cpus:1;gpus:1").get());
+  config.mutable_task_info()->set_name("task");
+  config.mutable_task_info()->mutable_task_id()->set_value("task");
+  config.mutable_task_info()->mutable_node_id()->set_value("node");
+
+  medios::ContainerID containerId;
+  containerId.set_value("task-container");
+
+  Future<Option<medios::node::ContainerLaunchInfo>> assigned =
+    assign->prepare(containerId, config);
+  AWAIT_READY(assigned);
+  ASSERT_SOME(assigned.get());
+
+  EXPECT_EQ(0, assigned->get().environment().variables_size());
+  ASSERT_EQ(1, assigned->get().task_environment().variables_size());
+  EXPECT_EQ("CUDA_VISIBLE_DEVICES",
+            assigned->get().task_environment().variables(0).name());
+
+  AWAIT_READY(assign->cleanup(containerId));
 }
 
 
