@@ -126,6 +126,19 @@ Try<Placement> place(
     double amount,
     const std::set<std::string>& bound);
 
+
+// The devices of `unit` that `uuids` names, in the order `uuids` gives them.
+//
+// Used wherever a device set is read back by identity rather than placed:
+// recover() rebuilding the ledger from a checkpoint a previous node process
+// wrote, and the device isolator reading the assignment the assignment
+// isolator checkpointed at prepare. Fails on the first UUID the unit does not
+// declare instead of returning the devices it did find, because a short list
+// would grant a container fewer devices than it was assigned.
+Try<std::vector<Device>> devicesByUuid(
+    const UnitSet& unit,
+    const std::vector<std::string>& uuids);
+
 } // namespace gpu {
 } // namespace modules {
 } // namespace medios {

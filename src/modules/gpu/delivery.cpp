@@ -65,6 +65,19 @@ string devicePath(const Device& device)
 }
 
 
+string visibleDevices(const vector<Device>& granted)
+{
+  string value;
+  for (const Device& device : granted) {
+    if (!value.empty()) {
+      value += ",";
+    }
+    value += device.uuid;
+  }
+  return value;
+}
+
+
 vector<DeviceMount> deviceMounts(
     const vector<DeviceAccess>& declarations,
     const string& rootfs)
