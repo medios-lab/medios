@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GPU isolators: assign and devices (medios#45)</title>
+<title>Design: GPU placement and device isolation as separate isolators (medios#45)</title>
 <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
@@ -11,61 +11,42 @@
   :root {
     --bg: #F4F6F9; --card: #FFFFFF; --line: #DDE3EC; --fg: #1F2933; --muted: #5A6577;
     --blue: #184E88; --teal: #137A63; --purple: #5B3E96; --red: #B83333; --amber: #B45309;
-    --teal-bg: #E3F2EE; --red-bg: #F8E6E6; --amber-bg: #FBF0E1; --blue-bg: #E6EEF8;
+    --teal-bg: #E3F2EE; --red-bg: #F8E6E6; --amber-bg: #FBF0E1;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
-    font: 15.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
   .page { max-width: 1140px; margin: 0 auto; padding: 28px 18px 80px; }
-  h1 { font-size: 1.75rem; margin: 0 0 6px; color: var(--blue); }
-  h2 { font-size: 1.25rem; margin: 40px 0 12px; color: var(--blue); }
-  h3 { font-size: 1.02rem; margin: 0 0 6px; }
-  p { margin: 6px 0 10px; }
-  code { font: 0.88em ui-monospace, SFMono-Regular, Menlo, monospace; background: #EEF1F5; padding: 1px 5px; border-radius: 4px; }
-  pre { font: 0.85em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: #EEF1F5; padding: 10px 12px;
+  h1 { font-size: 1.6rem; margin: 0 0 4px; color: var(--blue); }
+  h2 { font-size: 1.15rem; margin: 36px 0 10px; color: var(--blue); }
+  h3 { font-size: 1rem; margin: 0 0 6px; }
+  p { margin: 6px 0 10px; max-width: 860px; }
+  code { font: 0.87em ui-monospace, SFMono-Regular, Menlo, monospace; background: #EEF1F5; padding: 1px 4px; border-radius: 3px; }
+  pre { font: 0.84em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: #EEF1F5; padding: 10px 12px;
     border-radius: 6px; overflow-x: auto; margin: 6px 0; }
+  .meta { color: var(--muted); font-size: 0.9rem; margin-bottom: 14px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
-  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .summary { border-left: 4px solid var(--blue); }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .glossary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  @media (max-width: 820px) { .grid-3, .grid-2, .glossary-grid { grid-template-columns: 1fr; } }
-  .hero { background: var(--card); border: 1px solid var(--line); border-left: 5px solid var(--blue);
-    border-radius: 8px; padding: 18px 20px; }
-  .hero .q { font-size: 1.2rem; font-weight: 600; margin: 4px 0 10px; }
-  .nums { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-  .num { background: var(--blue-bg); border-radius: 6px; padding: 8px 12px; min-width: 150px; }
-  .num b { display: block; font-size: 1.35rem; color: var(--blue); }
-  .num span { color: var(--muted); font-size: 0.85rem; }
-  .term { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 9px 12px; }
-  .badge { display: inline-block; font: 600 0.8rem ui-monospace, Menlo, monospace; color: #fff;
-    background: var(--blue); border-radius: 4px; padding: 1px 7px; margin-bottom: 4px; }
-  .badge.amber { background: var(--amber); } .badge.teal { background: var(--teal); } .badge.purple { background: var(--purple); }
-  .term p { margin: 2px 0 0; font-size: 0.92rem; }
-  .rule h3 { color: var(--blue); }
-  .ex { background: #F7F9FB; border-radius: 6px; padding: 8px 10px; font-size: 0.9rem; margin-top: 8px; }
-  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-bottom: 14px; }
-  label.ctl { display: block; font-size: 0.85rem; color: var(--muted); }
-  select, input[type=range] { width: 100%; margin-top: 4px; font: inherit; }
-  select { padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
-  .check { display: flex; gap: 8px; align-items: flex-start; font-size: 0.92rem; margin-top: 6px; }
-  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0; }
-  @media (max-width: 820px) { .kpis { grid-template-columns: 1fr 1fr; } }
-  .kpi { border-radius: 8px; padding: 10px 12px; border: 1px solid var(--line); background: var(--card); }
-  .kpi b { display: block; font-size: 1.5rem; }
-  .kpi span { font-size: 0.82rem; color: var(--muted); }
-  .kpi.bad b { color: var(--red); } .kpi.good b { color: var(--teal); } .kpi.warn b { color: var(--amber); }
-  .delta { background: var(--teal-bg); border: 1px solid #B9DDD3; border-radius: 8px; padding: 12px 14px; }
-  .delta.badd { background: var(--red-bg); border-color: #EBC3C3; }
-  .delta ul { margin: 6px 0 0 18px; padding: 0; }
-  .offer { margin-top: 10px; background: #fff; border: 1px dashed var(--purple); border-radius: 6px; padding: 8px 10px; font-size: 0.9rem; }
-  .offer b { color: var(--purple); }
+  @media (max-width: 820px) { .grid-2 { grid-template-columns: 1fr; } }
   .wrap { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; min-width: 680px; background: var(--card); }
-  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; font-size: 0.9rem; }
-  th { background: #EEF1F5; }
-  td.y { background: var(--teal-bg); color: var(--teal); }
-  td.n { background: var(--red-bg); color: var(--red); }
-  td.p { background: var(--amber-bg); color: var(--amber); }
+  table { border-collapse: collapse; width: 100%; min-width: 700px; background: var(--card); }
+  th, td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; font-size: 0.88rem; }
+  th { background: #EEF1F5; font-weight: 600; }
+  td.y { background: var(--teal-bg); } td.n { background: var(--red-bg); } td.p { background: var(--amber-bg); }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  label.ctl { display: block; font-size: 0.84rem; color: var(--muted); }
+  select, input[type=range] { width: 100%; margin-top: 4px; font: inherit; }
+  select { padding: 5px; border: 1px solid var(--line); border-radius: 5px; background: #fff; }
+  .check { display: flex; gap: 8px; align-items: flex-start; font-size: 0.88rem; margin-top: 6px; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 10px 0; }
+  @media (max-width: 820px) { .kpis { grid-template-columns: 1fr 1fr; } }
+  .kpi { border-radius: 6px; padding: 8px 10px; border: 1px solid var(--line); background: var(--card); }
+  .kpi b { display: block; font-size: 1.35rem; }
+  .kpi span { font-size: 0.8rem; color: var(--muted); }
+  .kpi.bad b { color: var(--red); } .kpi.good b { color: var(--teal); } .kpi.warn b { color: var(--amber); }
+  .result { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; font-size: 0.88rem; background: #fff; }
+  .result ul { margin: 6px 0 0 18px; padding: 0; }
   .src { color: var(--muted); font-size: 0.84rem; }
   svg text { font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
 </style>
@@ -76,181 +57,177 @@
 <script type="text/babel">
 const { useState } = React;
 
-// A model of a two-GPU node receiving one-GPU grants. Each rule cites its
-// source in the "Where each rule comes from" table at the bottom.
-
-const GPUS = 2;
+// Behaviour model for one node with two physical GPUs and tasks that each
+// request gpus:1. Every rule below corresponds to a row in the Sources table.
 
 const NODES = {
-  pod: "Unprivileged node (e.g. a RunPod pod): no writable cgroups",
-  fleet: "Privileged Linux node with the cgroups devices controller",
+  unpriv: "Unprivileged node: no writable cgroup hierarchy (RunPod pod)",
+  priv: "Privileged Linux node with cgroups/devices",
 };
 
 const CONFIGS = {
-  today: "Today",
-  asis: "GPU module as it is",
-  assign: "--isolation=gpu/assign",
-  both: "--isolation=gpu/assign,gpu/devices",
-  devicesOnly: "--isolation=gpu/devices (misconfigured)",
+  none: "Current: no GPU module (as deployed on RunPod pods)",
+  module: "Current: GPU module (com_medioslab_medios_gpu)",
+  assign: "Proposed: gpu/assign",
+  both: "Proposed: gpu/assign,gpu/devices",
+  devicesOnly: "Proposed, misconfigured: gpu/devices without gpu/assign",
 };
 
-// What each configuration does on each node type.
-//   picks:     the node chooses a card per grant and records it
-//   tells:     the task gets CUDA_VISIBLE_DEVICES for its cards
-//   enforces:  the kernel blocks the other cards
-//   remembers: the record survives a node restart
-//   refused:   launch is refused, with the message shown
+const DEVICE_REFUSAL = "containerizer refuses the launch: isolators declared device access but --isolation has neither 'cgroups/devices' nor 'cgroups/all' (containerizer.cpp:282-299)";
+const NO_PLACEMENT = "gpu/devices prepare() fails: the ledger holds no placement for this container ID";
+
+// places:     the node binds the grant to specific device UUIDs
+// env:        the node sets CUDA_VISIBLE_DEVICES for the task
+// enforces:   the devices cgroup denies open() on unallocated device files
+// persists:   placement is checkpointed and restored by recover()
+// advertised: the offer carries the node's GPU isolation mode
 function mechanism(node, config) {
-  const NONE = { name: "nothing picks a card", picks: false, tells: false, enforces: false, remembers: false, attr: null };
-  const MODULE = { name: "GPU module (places and enforces, sets no variable)", picks: true, tells: false, enforces: true, remembers: true, attr: null };
-  const ASSIGN = { name: "gpu/assign", picks: true, tells: true, enforces: false, remembers: true, attr: "gpu_isolation:assign" };
-  const BOTH = { name: "gpu/assign + gpu/devices", picks: true, tells: true, enforces: true, remembers: true, attr: "gpu_isolation:assign,devices" };
-  const refuse = (msg) => ({ name: "launch refused", refused: msg, picks: false, tells: false, enforces: false, remembers: false, attr: null });
-  const noCgroup = "isolators declared device access but --isolation has neither 'cgroups/devices' nor 'cgroups/all'";
-  const noAssign = "gpu/devices found no cards chosen for this container: list gpu/assign before gpu/devices in --isolation";
-  if (config === "today") return node === "pod" ? NONE : MODULE;
-  if (config === "asis") return node === "pod" ? refuse(noCgroup) : MODULE;
-  if (config === "assign") return ASSIGN;
-  if (config === "both") return node === "pod" ? refuse(noCgroup) : BOTH;
-  return refuse(noAssign);
+  const unplaced = { label: "No placement: CUDA enumerates both GPUs", places: false, env: false, enforces: false, persists: false, advertised: null };
+  const module = { label: "GPU module: placement by UUID, device cgroup, no CUDA_VISIBLE_DEVICES", places: true, env: false, enforces: true, persists: true, advertised: null };
+  const assign = { label: "gpu/assign: placement by UUID, CUDA_VISIBLE_DEVICES, no device cgroup", places: true, env: true, enforces: false, persists: true, advertised: "gpu_isolation:assign" };
+  const both = { label: "gpu/assign + gpu/devices: placement, CUDA_VISIBLE_DEVICES, device cgroup", places: true, env: true, enforces: true, persists: true, advertised: "gpu_isolation:assign,devices" };
+  const refused = (reason) => ({ label: "Launch refused", refused: reason, places: false, env: false, enforces: false, persists: false, advertised: null });
+  if (config === "none") return unplaced;
+  if (config === "module") return node === "unpriv" ? refused(DEVICE_REFUSAL) : module;
+  if (config === "assign") return assign;
+  if (config === "both") return node === "unpriv" ? refused(DEVICE_REFUSAL) : both;
+  return refused(NO_PLACEMENT);
 }
 
+// Task 1 and task 3 come from one framework that writes CUDA_VISIBLE_DEVICES
+// into its own command when the checkbox is set; task 2 does not.
 const TASKS = [
-  { who: "tabular-bench", selfIndex: 0 },
-  { who: "Cue", selfIndex: null },
-  { who: "tabular-bench", selfIndex: 1 },
+  { framework: "framework A", ownIndex: 0 },
+  { framework: "framework B", ownIndex: null },
+  { framework: "framework A", ownIndex: 1 },
 ];
 
-function simulate(node, config, n, restart, selfSet) {
+function simulate(node, config, count, restart, ownEnv) {
   const m = mechanism(node, config);
   let free = [0, 1];
   const out = [];
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < count; i++) {
     const t = TASKS[i];
-    const r = { who: t.who, i, status: "runs", card: null, sees: [], note: "" };
-    if (i >= GPUS) { r.status = "waits"; r.note = "the controller has no gpus left to offer"; out.push(r); continue; }
-    if (m.refused) { r.status = "refused"; r.note = m.refused; out.push(r); continue; }
-    if (restart && i === 1 && !m.remembers) free = [0, 1];
-    const own = selfSet && t.selfIndex !== null ? t.selfIndex : null;
-    if (!m.picks) {
-      r.card = own !== null ? own : 0;
-      r.sees = [0, 1];
-      r.note = own !== null ? "its own CUDA_VISIBLE_DEVICES=" + own : "no variable, so CUDA uses card 0";
+    const r = { i, framework: t.framework, state: "running", device: null, openable: [], note: "" };
+    if (i >= 2) { r.state = "not launched"; r.note = "the controller has no unallocated gpus on this node to offer"; out.push(r); continue; }
+    if (m.refused) { r.state = "refused"; r.note = m.refused; out.push(r); continue; }
+    if (restart && i === 1 && !m.persists) free = [0, 1];
+    const own = ownEnv && t.ownIndex !== null ? t.ownIndex : null;
+    if (!m.places) {
+      r.device = own !== null ? own : 0;
+      r.openable = [0, 1];
+      r.note = own !== null ? "command sets CUDA_VISIBLE_DEVICES=" + own : "no CUDA_VISIBLE_DEVICES; CUDA selects device 0 by default";
     } else {
-      const picked = free.shift();
-      if (own !== null && m.tells && !m.enforces) {
-        r.card = own;
-        r.note = "node chose card " + picked + "; the task's own value " + own + " wins";
+      const placed = free.shift();
+      if (own !== null && !m.enforces) {
+        r.device = own;
+        r.note = "placed on GPU " + placed + "; the command's CUDA_VISIBLE_DEVICES=" + own + " overrides the isolator's value";
       } else {
-        r.card = picked;
-        r.note = m.tells ? "CUDA_VISIBLE_DEVICES names card " + picked : "device cgroup allows only card " + picked + "; no variable";
-        if (own !== null && m.enforces && own !== picked) {
-          r.note += "; its own value " + own + " names a card the cgroup blocks, so CUDA finds no usable card";
-        }
+        r.device = placed;
+        r.note = m.env ? "placed on GPU " + placed + "; CUDA_VISIBLE_DEVICES names it" : "placed on GPU " + placed + "; device cgroup allows only its device file";
+        if (own !== null && own !== placed) r.note += "; the command's CUDA_VISIBLE_DEVICES=" + own + " names a device the cgroup denies, so CUDA initialisation finds no device";
       }
-      r.sees = m.enforces ? [r.card] : [0, 1];
+      r.openable = m.enforces ? [r.device] : [0, 1];
     }
     out.push(r);
   }
-  const users = {};
-  out.forEach(r => { if (r.status === "runs") users[r.card] = (users[r.card] || 0) + 1; });
-  out.forEach(r => { r.shared = r.status === "runs" && users[r.card] > 1; });
+  const holders = {};
+  out.forEach(r => { if (r.state === "running") holders[r.device] = (holders[r.device] || 0) + 1; });
+  out.forEach(r => { r.shared = r.state === "running" && holders[r.device] > 1; });
   return { m, tasks: out };
 }
 
 function Diagram({ sim, restart }) {
-  const W = 560, H = 250, tx = 20, tw = 190, gx = 380, gw = 150;
-  const ty = i => 30 + i * 70, gy = c => 55 + c * 100;
-  const col = r => r.status !== "runs" ? (r.status === "refused" ? "#B83333" : "#5A6577") : r.shared ? "#B83333" : "#137A63";
-  const usersOf = c => sim.tasks.filter(r => r.status === "runs" && r.card === c).length;
+  const W = 560, H = 250, tx = 20, tw = 200, gx = 380, gw = 150;
+  const ty = i => 30 + i * 70, gy = d => 55 + d * 100;
+  const colour = r => r.state !== "running" ? (r.state === "refused" ? "#B83333" : "#5A6577") : r.shared ? "#B83333" : "#137A63";
+  const holders = d => sim.tasks.filter(r => r.state === "running" && r.device === d).length;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Tasks on the left, GPUs on the right">
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Tasks and the GPUs they compute on">
       {sim.tasks.map(r => (
         <g key={"t" + r.i}>
-          <rect x={tx} y={ty(r.i)} width={tw} height="48" rx="7" fill="#fff" stroke={col(r)}
-            strokeWidth={r.status === "runs" ? 1.5 : 2} strokeDasharray={r.status === "waits" ? "5 4" : "0"} />
-          <text x={tx + 12} y={ty(r.i) + 20} fontSize="13" fontWeight="600" fill="#1F2933">Task {r.i + 1}: {r.who}</text>
-          <text x={tx + 12} y={ty(r.i) + 37} fontSize="11.5" fill={col(r)}>
-            {r.status === "runs" ? (r.shared ? "shares a card" : "own card") : r.status === "refused" ? "launch refused" : "waits for a free gpu"}
-            {restart && r.i >= 1 && r.status !== "waits" ? " · after restart" : ""}</text>
+          <rect x={tx} y={ty(r.i)} width={tw} height="48" rx="6" fill="#fff" stroke={colour(r)}
+            strokeWidth="1.5" strokeDasharray={r.state === "not launched" ? "5 4" : "0"} />
+          <text x={tx + 10} y={ty(r.i) + 20} fontSize="12.5" fontWeight="600" fill="#1F2933">Task {r.i + 1} ({r.framework})</text>
+          <text x={tx + 10} y={ty(r.i) + 37} fontSize="11" fill={colour(r)}>
+            {r.state === "running" ? (r.shared ? "shares a GPU" : "sole holder of its GPU") : r.state}
+            {restart && r.i >= 1 && r.state !== "not launched" ? " (after node restart)" : ""}</text>
         </g>
       ))}
-      {[0, 1].map(c => (
-        <g key={"g" + c}>
-          <rect x={gx} y={gy(c)} width={gw} height="50" rx="7" fill={usersOf(c) > 1 ? "#F8E6E6" : "#E3F2EE"}
-            stroke={usersOf(c) > 1 ? "#B83333" : "#137A63"} strokeWidth="1.5" />
-          <text x={gx + 14} y={gy(c) + 22} fontSize="13" fontWeight="600" fill="#1F2933">GPU {c}</text>
-          <text x={gx + 14} y={gy(c) + 39} fontSize="11.5" fill="#5A6577">{usersOf(c)} task{usersOf(c) === 1 ? "" : "s"} computing here</text>
+      {[0, 1].map(d => (
+        <g key={"g" + d}>
+          <rect x={gx} y={gy(d)} width={gw} height="50" rx="6" fill={holders(d) > 1 ? "#F8E6E6" : "#E3F2EE"}
+            stroke={holders(d) > 1 ? "#B83333" : "#137A63"} strokeWidth="1.5" />
+          <text x={gx + 12} y={gy(d) + 22} fontSize="12.5" fontWeight="600" fill="#1F2933">GPU {d} (index {d})</text>
+          <text x={gx + 12} y={gy(d) + 39} fontSize="11" fill="#5A6577">{holders(d)} task(s) using it</text>
         </g>
       ))}
-      {sim.tasks.filter(r => r.status === "runs").map(r => (
+      {sim.tasks.filter(r => r.state === "running").map(r => (
         <g key={"l" + r.i}>
-          {r.sees.filter(c => c !== r.card).map(c => (
-            <line key={c} x1={tx + tw} y1={ty(r.i) + 24} x2={gx} y2={gy(c) + 25} stroke="#B45309" strokeWidth="1.3" strokeDasharray="4 4" />
+          {r.openable.filter(d => d !== r.device).map(d => (
+            <line key={d} x1={tx + tw} y1={ty(r.i) + 24} x2={gx} y2={gy(d) + 25} stroke="#B45309" strokeWidth="1.2" strokeDasharray="4 4" />
           ))}
-          <line x1={tx + tw} y1={ty(r.i) + 24} x2={gx} y2={gy(r.card) + 25} stroke={r.shared ? "#B83333" : "#137A63"} strokeWidth="2.6" />
+          <line x1={tx + tw} y1={ty(r.i) + 24} x2={gx} y2={gy(r.device) + 25} stroke={r.shared ? "#B83333" : "#137A63"} strokeWidth="2.4" />
         </g>
       ))}
       <g transform={`translate(20, ${H - 14})`}>
-        <line x1="0" y1="-4" x2="22" y2="-4" stroke="#137A63" strokeWidth="2.6" />
-        <text x="28" y="0" fontSize="11" fill="#5A6577">computes on</text>
-        <line x1="120" y1="-4" x2="142" y2="-4" stroke="#B45309" strokeWidth="1.3" strokeDasharray="4 4" />
-        <text x="148" y="0" fontSize="11" fill="#5A6577">can also open (not blocked)</text>
+        <line x1="0" y1="-4" x2="22" y2="-4" stroke="#137A63" strokeWidth="2.4" />
+        <text x="28" y="0" fontSize="11" fill="#5A6577">CUDA context</text>
+        <line x1="120" y1="-4" x2="142" y2="-4" stroke="#B45309" strokeWidth="1.2" strokeDasharray="4 4" />
+        <text x="148" y="0" fontSize="11" fill="#5A6577">device file openable, not allocated to the task</text>
       </g>
     </svg>
   );
 }
 
-function Comparator() {
-  const [node, setNode] = useState("pod");
-  const [config, setConfig] = useState("today");
-  const [n, setN] = useState(2);
+function BehaviourMatrix() {
+  const [node, setNode] = useState("unpriv");
+  const [config, setConfig] = useState("none");
+  const [count, setCount] = useState(2);
   const [restart, setRestart] = useState(false);
-  const [selfSet, setSelfSet] = useState(false);
-  const sim = simulate(node, config, n, restart, selfSet);
-  const running = sim.tasks.filter(r => r.status === "runs");
+  const [ownEnv, setOwnEnv] = useState(false);
+  const sim = simulate(node, config, count, restart, ownEnv);
+  const running = sim.tasks.filter(r => r.state === "running");
   const shared = running.filter(r => r.shared).length;
-  const open = running.filter(r => r.sees.length > 1).length;
-  const refused = sim.tasks.filter(r => r.status === "refused").length;
-  const bad = shared > 0 || refused > 0;
+  const exposed = running.filter(r => r.openable.length > 1).length;
+  const refused = sim.tasks.filter(r => r.state === "refused").length;
   return (
     <div className="card">
       <div className="controls">
-        <label className="ctl">Node type
+        <label className="ctl">Node
           <select value={node} onChange={e => setNode(e.target.value)}>
             {Object.entries(NODES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
         </label>
-        <label className="ctl">GPU configuration
+        <label className="ctl">GPU isolation
           <select value={config} onChange={e => setConfig(e.target.value)}>
             {Object.entries(CONFIGS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
         </label>
-        <label className="ctl">One-GPU tasks launched: <b>{n}</b>
-          <input type="range" min="1" max="3" step="1" value={n} onChange={e => setN(+e.target.value)} />
+        <label className="ctl">Tasks launched, each with gpus:1: {count}
+          <input type="range" min="1" max="3" step="1" value={count} onChange={e => setCount(+e.target.value)} />
         </label>
         <div>
           <label className="check"><input type="checkbox" checked={restart} onChange={e => setRestart(e.target.checked)} />
-            Node restarts after task 1 starts; task 1 keeps running</label>
-          <label className="check"><input type="checkbox" checked={selfSet} onChange={e => setSelfSet(e.target.checked)} />
-            tabular-bench sets CUDA_VISIBLE_DEVICES itself</label>
+            medios-node restarts between task 1 and task 2; task 1's container survives</label>
+          <label className="check"><input type="checkbox" checked={ownEnv} onChange={e => setOwnEnv(e.target.checked)} />
+            Framework A sets CUDA_VISIBLE_DEVICES in its task command</label>
         </div>
       </div>
       <div className="kpis">
-        <div className={"kpi " + (shared ? "bad" : "good")}><b>{shared}</b><span>tasks computing on a shared card</span></div>
-        <div className={"kpi " + (open ? "warn" : "good")}><b>{open}</b><span>tasks that can open a card they weren't given</span></div>
+        <div className={"kpi " + (shared ? "bad" : "good")}><b>{shared}</b><span>running tasks sharing a GPU</span></div>
+        <div className={"kpi " + (exposed ? "warn" : "good")}><b>{exposed}</b><span>running tasks able to open an unallocated GPU</span></div>
         <div className={"kpi " + (refused ? "bad" : "good")}><b>{refused}</b><span>launches refused</span></div>
-        <div className={"kpi " + (sim.m.attr ? "good" : "warn")}><b>{sim.m.attr ? "yes" : "no"}</b><span>a framework can tell from the offer what it gets</span></div>
+        <div className={"kpi " + (sim.m.advertised ? "good" : "warn")}><b>{sim.m.advertised ? "yes" : "no"}</b><span>isolation mode visible in the offer</span></div>
       </div>
       <div className="grid-2">
         <div><Diagram sim={sim} restart={restart} /></div>
-        <div className={"delta " + (bad ? "badd" : "")}>
-          <b>{sim.m.name}</b>
+        <div className="result">
+          <b>{sim.m.label}</b>
           <ul>
-            {sim.tasks.map(r => <li key={r.i}>Task {r.i + 1} ({r.who}): {r.status === "runs" ? "GPU " + r.card + "; " + r.note : r.note}</li>)}
+            {sim.tasks.map(r => <li key={r.i}>Task {r.i + 1} ({r.framework}): {r.state === "running" ? "computes on GPU " + r.device + "; " + r.note : r.note}</li>)}
           </ul>
-          <div className="offer"><b>What the offer says: </b>
-            {sim.m.attr ? <code>{sim.m.attr}</code> : <span>gpus:2, and nothing about how cards are handed out</span>}</div>
+          <p style={{marginBottom: 0}}>Offer attribute: {sim.m.advertised ? <code>{sim.m.advertised}</code> : "none; the offer carries only the gpus scalar"}</p>
         </div>
       </div>
     </div>
@@ -260,168 +237,136 @@ function Comparator() {
 function App() {
   return (
     <div className="page">
-      <div className="hero">
-        <h1>GPU isolators: assign and devices</h1>
-        <div className="q">How should a node hand GPUs to tasks when some nodes can block other cards and some can't?</div>
-        <p>Split the GPU module into two isolators with one job each. <code>gpu/assign</code> picks a card for every grant, remembers it across node restarts and tells the task through <code>CUDA_VISIBLE_DEVICES</code>. <code>gpu/devices</code> makes the kernel block every other card, on nodes that can. The operator lists the ones the node can honour in <code>--isolation</code>, and the node advertises what it loaded, so a framework reads from the offer what it will get.</p>
-        <div className="nums">
-          <div className="num"><b>2 ledgers</b><span>today: docker_shell's and the GPU module's</span></div>
-          <div className="num"><b>0 cards picked</b><span>for a command task on a node without the module</span></div>
-          <div className="num"><b>1 ledger</b><span>after this change, for the medios containerizer</span></div>
-          <div className="num"><b>0 new flags</b><span>configuration is the existing --isolation list</span></div>
-        </div>
+      <h1>GPU placement and device isolation as separate isolators</h1>
+      <div className="meta">Design proposal for medios#45 · Status: proposed · Component: <code>src/modules/gpu</code> · Sources are cited against medios-lab/medios master</div>
+
+      <div className="card summary">
+        <p>The controller accounts for GPUs as a scalar resource, <code>gpus</code>, and never names a device. Mapping a grant of <code>gpus:n</code> to physical devices is the node's job, and medios has two implementations of that mapping. Neither one runs on a node without a writable cgroup hierarchy, so on a RunPod pod no component binds a grant to a device.</p>
+        <p>This proposal splits the GPU module (<code>libmedios_gpu.so</code>) into two isolators that share one placement ledger. <code>gpu/assign</code> binds each grant to device UUIDs, checkpoints and recovers the binding, and sets <code>CUDA_VISIBLE_DEVICES</code>; it needs no cgroup. <code>gpu/devices</code> turns the same binding into device-cgroup rules and requires <code>cgroups/devices</code>. An operator selects the behaviour with the existing <code>--isolation</code> flag, and the node reports the selection as an offer attribute so a framework can filter on it before it launches a task.</p>
       </div>
 
-      <h2>Read this first: the terms</h2>
-      <div className="glossary-grid">
-        <div className="term"><span className="badge">gpus:n</span><p>A grant. The node advertises <code>gpus:2</code> as a number; a task launched with <code>gpus:1</code> takes one off it. The number names no card.</p></div>
-        <div className="term"><span className="badge">controller</span><p>Counts resources and offers them to any framework. It never grants more gpus than a node advertised, and it never picks a card.</p></div>
-        <div className="term"><span className="badge">isolator</span><p>A piece the medios containerizer calls at each launch, restart recovery and cleanup. It can add environment variables, mounts and device rules. Chosen by name in <code>--isolation</code>; module isolators prepare in the order listed there.</p></div>
-        <div className="term"><span className="badge">GPU module</span><p><code>libmedios_gpu.so</code>, loaded with <code>--modules</code>. It already places grants on cards by UUID, checkpoints and recovers them, and asks for the cards' device files to be allowed.</p></div>
-        <div className="term"><span className="badge">units file</span><p>The operator's list of which physical cards, by UUID, stand behind the <code>gpus</code> resource on a host. The module refuses to load without it.</p></div>
-        <div className="term"><span className="badge amber">ledger</span><p>The node's record of which card each running task holds, so the next grant gets a free one.</p></div>
-        <div className="term"><span className="badge amber">checkpoint / recover</span><p>Writing the ledger to disk, and reading it back when the node process restarts while its tasks keep running.</p></div>
-        <div className="term"><span className="badge amber">device cgroup</span><p>The Linux cgroups devices controller: a kernel rule that stops a process opening device files it wasn't allowed. It needs a writable cgroup hierarchy, which an unprivileged container doesn't have.</p></div>
-        <div className="term"><span className="badge teal">CUDA_VISIBLE_DEVICES</span><p>The variable CUDA reads to decide which cards a process uses. It accepts indices or <code>GPU-</code>UUIDs. It tells; it doesn't lock.</p></div>
-        <div className="term"><span className="badge teal">assign / enforce</span><p>Assigning gives a task its card and tells it which. Enforcing stops it opening the others. <code>gpu/assign</code> does the first, <code>gpu/devices</code> the second.</p></div>
-        <div className="term"><span className="badge purple">unprivileged node</span><p>A node running inside a container it doesn't control, such as a RunPod pod: no privileged mode, so no device cgroups and no Docker daemon.</p></div>
-        <div className="term"><span className="badge purple">offer attribute</span><p>A key and value the node sends with every offer, which a framework can read or filter on before it launches anything.</p></div>
-      </div>
-
-      <h2>Three rules behind the design</h2>
-      <div className="grid-3">
-        <div className="card rule">
-          <h3>1. Every GPU node assigns</h3>
-          <p>Any framework can take an offer on any node, so a node with more than one card always has to pick one per grant and remember the choice across a restart. That's <code>gpu/assign</code>, and it needs nothing a pod lacks.</p>
-          <div className="ex">2 cards, a tabular-bench task and a Cue task: each gets its own card, on a pod or anywhere else.</div>
-        </div>
-        <div className="card rule">
-          <h3>2. Enforcing is extra, and only where the kernel can</h3>
-          <p><code>gpu/devices</code> turns the chosen cards into a device-cgroup rule. It runs only where <code>--isolation</code> also has <code>cgroups/devices</code>; elsewhere the containerizer refuses the launch.</p>
-          <div className="ex">A pod lists only <code>gpu/assign</code>; a privileged fleet node lists both.</div>
-        </div>
-        <div className="card rule">
-          <h3>3. Frameworks see what the node does</h3>
-          <p>The node advertises the GPU isolators it loaded, so "assigned only" and "assigned and enforced" are visible in the offer rather than discovered after a launch.</p>
-          <div className="ex">A framework that needs enforcement filters on the attribute and never lands on a pod.</div>
-        </div>
-      </div>
-
-      <h2>Try it: node type × GPU configuration</h2>
-      <p>Pick a node type and a configuration, then launch one, two or three one-GPU tasks on a two-GPU node. Tasks 1 and 3 belong to tabular-bench and task 2 to Cue, as on the pod of 2026-11-26.</p>
-      <Comparator />
-
-      <h2>Worked examples</h2>
-      <div className="grid-3">
-        <div className="card">
-          <h3>a. The RunPod pod, 2026-11-26</h3>
-          <p>Observed: on a 2× A100 pod running the plain containerizer with <code>gpus:2</code> and no module, tabular-bench put <code>CUDA_VISIBLE_DEVICES=0</code> and <code>=1</code> in its own commands. A Cue task granted a GPU there would get no variable and compute on card 0. Unprivileged node / Today / 2 tasks shows it.</p>
-        </div>
-        <div className="card">
-          <h3>b. The same pod with gpu/assign</h3>
-          <p>Task 1 gets card 0 and task 2 card 1, each named in its variable and written to its container directory. After a node restart the module reads both back, so task 3 waits instead of doubling up. Nothing blocks a task from opening the other card, and the offer says so.</p>
-        </div>
-        <div className="card">
-          <h3>c. Why "0 gpus free" proves nothing</h3>
-          <p>In (a) the controller shows the node's gpus fully allocated, which reads as if each task has its own card. That number only counts grants. Only the node's ledger knows which card each task holds.</p>
-        </div>
-      </div>
-
-      <h2>What changes in the code</h2>
-      <div className="grid-2">
-        <div className="card">
-          <h3>One library, two isolators, one ledger</h3>
-          <pre>libmedios_gpu.so
-  ledger          placement by UUID, checkpoint, recover, release
-  gpu/assign      prepare: place the claim, set CUDA_VISIBLE_DEVICES
-                  cleanup: release
-  gpu/devices     prepare: read this container's cards from the ledger,
-                           declare their device files (and mounts for an
-                           image with its own filesystem)
-                  fails if gpu/assign has not placed the container</pre>
-          <p>Both names register from the one library and share the ledger in the node process. The driver-volume injection for containers with their own image stays with <code>gpu/devices</code>, since it only matters where device files are granted. The isolator names in the box are placeholders until the PR fixes them.</p>
-        </div>
-        <div className="card">
-          <h3>Node configurations</h3>
-          <pre># unprivileged node (pod)
---modules=file:///etc/medios-gpu/modules.json
---isolation=posix/cpu,posix/mem,gpu/assign
-
-# privileged fleet node
---modules=file:///etc/medios-gpu/modules.json
---isolation=cgroups/all,gpu/assign,gpu/devices</pre>
-          <p>The paths are examples. The two configurations differ only in the <code>--isolation</code> list. A misconfiguration fails loudly with a message naming what's missing: an isolator name the node can't find stops the node at start, and <code>gpu/devices</code> without <code>cgroups/devices</code> or without <code>gpu/assign</code> refuses the first GPU launch.</p>
-        </div>
-      </div>
-
-      <h2>Coverage, before and after</h2>
+      <h2>1. Definitions</h2>
       <div className="wrap">
         <table>
-          <thead><tr><th></th><th>docker_shell node</th><th>Fleet node, module today</th><th>Fleet node, assign + devices</th><th>Pod today</th><th>Pod, gpu/assign</th></tr></thead>
+          <thead><tr><th>Term</th><th>Meaning in this document</th></tr></thead>
           <tbody>
-            <tr><td>Picks a card per grant</td><td className="y">yes</td><td className="y">yes</td><td className="y">yes</td><td className="n">no</td><td className="y">yes</td></tr>
-            <tr><td>Tells the task which card</td><td className="y">yes</td><td className="p">no variable</td><td className="y">yes</td><td className="n">no</td><td className="y">yes</td></tr>
-            <tr><td>Blocks other cards</td><td className="y">yes</td><td className="y">yes</td><td className="y">yes</td><td className="n">no</td><td className="p">no (can't, unprivileged)</td></tr>
-            <tr><td>Survives a node restart</td><td className="n">no (#149)</td><td className="y">yes</td><td className="y">yes</td><td>no ledger</td><td className="y">yes</td></tr>
-            <tr><td>Visible in the offer</td><td className="n">no</td><td className="n">no</td><td className="y">yes</td><td className="n">no</td><td className="y">yes</td></tr>
+            <tr><td>GPU</td><td>One physical device, identified by its NVML UUID (<code>GPU-…</code>) and, on a given host, by its NVML index.</td></tr>
+            <tr><td>grant</td><td>The quantity of <code>gpus</code> in a launched task's resources. It is a number; the controller attaches no device identity to it.</td></tr>
+            <tr><td>placement</td><td>The node's binding of one container's grant to a set of device UUIDs.</td></tr>
+            <tr><td>ledger</td><td>The node-process state that records each live placement, so that the next <code>prepare()</code> chooses among unbound devices.</td></tr>
+            <tr><td>units file</td><td>The GPU module's required parameter: for each resource name, the device UUIDs behind it and <code>per_device</code>, the resource units one device provides.</td></tr>
+            <tr><td>share</td><td>A grant that is not a multiple of <code>per_device</code>. The module allows a share only for a resource declared over one device and records no placement for it (<code>units.cpp:325-345</code>).</td></tr>
+            <tr><td>enforcement</td><td>The cgroup devices controller denying <code>open()</code> on device files outside the placement. Setting <code>CUDA_VISIBLE_DEVICES</code> is not enforcement: a process can override the variable or open <code>/dev/nvidia*</code> directly.</td></tr>
+            <tr><td>unprivileged node</td><td>A medios-node running inside a container it does not control (for example a RunPod pod): no privileged mode, no writable cgroup hierarchy (hypothesis, section 7), no Docker daemon.</td></tr>
           </tbody>
         </table>
       </div>
-      <p className="src">docker_shell keeps its own ledger. Converging it on the module's ledger is a separate issue and the path to one ledger on every node type.</p>
 
-      <h2>Decision record</h2>
+      <h2>2. Current GPU paths</h2>
+      <div className="wrap">
+        <table>
+          <thead><tr><th>Path</th><th>Placement</th><th>CUDA_VISIBLE_DEVICES</th><th>Enforcement</th><th>Recovery after medios-node restart</th><th>Runs on an unprivileged node</th></tr></thead>
+          <tbody>
+            <tr><td>docker_shell containerizer</td><td className="y">Indices 0..n−1, lowest free first, whole GPUs only</td><td className="y">Set by <code>docker run --gpus device=…</code> through <code>MEDIOS_DOCKER_GPU_DEVICES</code></td><td className="y">Docker device rules</td><td className="n"><code>recover()</code> is a no-op; the ledger restarts empty (#149)</td><td className="n">No: needs a Docker daemon</td></tr>
+            <tr><td>Medios containerizer with the GPU module</td><td className="y">By UUID from the units file</td><td className="n">Not set</td><td className="y">Device declarations, granted through <code>cgroups/devices</code></td><td className="y">Checkpoint <code>gpu_allocation.checkpoint</code> in the container directory</td><td className="n">No: launch refused (<code>containerizer.cpp:282-299</code>)</td></tr>
+            <tr><td>Medios containerizer, <code>gpus</code> advertised, no module</td><td className="n">None</td><td className="n">Not set</td><td className="n">None</td><td>Nothing to recover</td><td className="p">Yes, with no placement</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Observed on 2026-11-26, on a RunPod pod with two A100s running the third path: the controller reported the node's <code>gpus:2</code> fully allocated to two tasks, and one framework had written <code>CUDA_VISIBLE_DEVICES=0</code> and <code>=1</code> into its own commands. A second framework's <code>gpus:1</code> task on that node would have received no variable, and CUDA would have opened device 0. The controller's allocation count was correct; the node had no record of which device each task used.</p>
+
+      <h2>3. Constraint that rules out the module on unprivileged nodes</h2>
+      <p>The GPU module's <code>declare()</code> returns device declarations for every placed container (<code>gpu_isolator.cpp:489-517</code>). The medios containerizer collects declarations from all isolators after <code>prepare()</code> and refuses the launch when <code>--isolation</code> lists neither <code>cgroups/devices</code> nor <code>cgroups/all</code> (<code>containerizer.cpp:282-299</code>). An unprivileged node can't list either, so every GPU launch fails there. Placement and checkpointing do not depend on cgroups; only the declarations do. The proposal separates them along that line.</p>
+
+      <h2>4. Proposal</h2>
+      <div className="wrap">
+        <table>
+          <thead><tr><th>Isolator hook</th><th>gpu/assign</th><th>gpu/devices</th></tr></thead>
+          <tbody>
+            <tr><td><code>prepare()</code></td><td>Place the grant on device UUIDs in the ledger, write the checkpoint, return <code>CUDA_VISIBLE_DEVICES</code> in <code>task_environment</code> for command tasks and in <code>environment</code> otherwise.</td><td>Read the container's placement from the ledger and return device declarations, device mounts for a container with its own rootfs, and the driver-volume injection. Fail if the ledger holds no placement for the container ID.</td></tr>
+            <tr><td><code>recover()</code></td><td>Rebuild the ledger from checkpoints of surviving containers.</td><td>No state of its own; reads the ledger that <code>gpu/assign</code> rebuilt.</td></tr>
+            <tr><td><code>update()</code></td><td>Unchanged from the module: growth beyond the placed devices is refused.</td><td>Unchanged: access is not revoked on shrink.</td></tr>
+            <tr><td><code>cleanup()</code></td><td>Release the placement and remove the checkpoint.</td><td>Nothing to release.</td></tr>
+            <tr><td>Requires</td><td>NVML and the units file (as today).</td><td><code>gpu/assign</code> listed before it, and <code>cgroups/devices</code> or <code>cgroups/all</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Both isolators register from <code>libmedios_gpu.so</code> and share the ledger as process-wide state. The containerizer guarantees the ordering: it creates module isolators in <code>--isolation</code> order (<code>containerizer.cpp:482-516</code>) and runs their <code>prepare()</code> calls sequentially in that order (<code>containerizer.cpp:1539</code>). The names <code>gpu/assign</code> and <code>gpu/devices</code> stand for the registered module symbols, which the implementation PR will fix (for example <code>com_medioslab_medios_gpu_assign</code>).</p>
+      <p>Shares keep the existing units-file rules. On a node with <code>gpu/assign</code> alone, nothing limits the memory or compute of share holders on one device, so the units file for such a node declares whole devices (default, provisional).</p>
+
       <div className="grid-2">
         <div className="card">
-          <h3>Split the GPU module into gpu/assign and gpu/devices</h3>
-          <pre>Type:      design choice (structure)
-Owner:     src/modules/gpu
-Behavior:  how a gpus grant becomes cards, and whether other
-           cards are blocked
-Rule:      assign on every GPU node; enforce where
-           cgroups/devices exists; the --isolation list is the
-           only switch
-Evidence:  containerizer.cpp:282-299 refuses device declarations
-           without cgroups/devices; the module always declares
-           them; module isolators prepare in --isolation order
-           (containerizer.cpp:482-500, 1539)
-Deferred:  docker_shell on the shared ledger</pre>
-          <p>Rejected alternatives: a mode parameter on the module, which branches every placement path; a separate in-tree isolator, which adds a third ledger; and a RunPod containerizer, which re-implements launch, sandbox, logging and recovery, adds a third ledger and ties core to one provider.</p>
+          <h3>Node configuration</h3>
+          <pre># unprivileged node
+--modules=file:///etc/medios-gpu/modules.json
+--isolation=posix/cpu,posix/mem,gpu/assign
+
+# privileged node
+--modules=file:///etc/medios-gpu/modules.json
+--isolation=cgroups/all,gpu/assign,gpu/devices</pre>
+          <p className="src">Paths are example values. The two configurations differ only in <code>--isolation</code>.</p>
         </div>
         <div className="card">
-          <h3>Open questions, each with the decision it informs</h3>
-          <pre>Hypothesis:  RunPod pods have no writable cgroup hierarchy.
-             Inferred from "no privileged mode" (observed
-             2026-11-10); not probed. Informs: whether a pod can
-             ever list gpu/devices. Probe on the next GPU pod.
-
-Research q:  CUDA_VISIBLE_DEVICES as GPU-UUIDs or as indices
-             with CUDA_DEVICE_ORDER=PCI_BUS_ID. Some tools may
-             parse the variable as integers (unverified).
-             Informs: the value gpu/assign writes. Test both on
-             the next GPU pod before the PR merges.
-
-Open:        how the node advertises its GPU isolators, derived
-             from what it loaded rather than set by hand, so the
-             attribute cannot disagree with --isolation.
-             Informs: what frameworks filter on.
-
-Open:        how CUDA enumerates on a fleet node where the
-             device cgroup hides cards and no variable is set.
-             Moot once gpu/assign always sets it.</pre>
+          <h3>Misconfiguration and its failure</h3>
+          <div className="wrap">
+            <table style={{minWidth: 0}}>
+              <tbody>
+                <tr><td>Isolator name not registered</td><td>medios-node exits at start: <code>Unknown or unsupported isolator '…'</code> (<code>containerizer.cpp:516</code>)</td></tr>
+                <tr><td><code>gpu/devices</code> without <code>cgroups/devices</code></td><td>First GPU launch refused (<code>containerizer.cpp:282-299</code>)</td></tr>
+                <tr><td><code>gpu/devices</code> without, or before, <code>gpu/assign</code></td><td>First GPU launch refused by <code>gpu/devices</code> <code>prepare()</code> (proposed)</td></tr>
+                <tr><td>Units file missing or invalid</td><td>Module creation fails, as today (<code>gpu_isolator.cpp:663-724</code>)</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
-      <h2>Where each rule comes from</h2>
+      <h2>5. Behaviour by node type and configuration</h2>
+      <p>The model below runs one to three tasks, each requesting <code>gpus:1</code>, on a node with two GPUs. Tasks 1 and 3 belong to framework A and task 2 to framework B, matching the 2026-11-26 pod. Each outcome follows from a rule cited in section 8.</p>
+      <BehaviourMatrix />
+
+      <h2>6. Alternatives considered</h2>
       <div className="wrap">
         <table>
-          <thead><tr><th>Behaviour</th><th>Source (medios-lab/medios master)</th></tr></thead>
+          <thead><tr><th>Alternative</th><th>Reason rejected</th></tr></thead>
           <tbody>
-            <tr><td>Launch refused when isolators declare devices and <code>--isolation</code> lacks <code>cgroups/devices</code></td><td><code>src/node/containerizer/medios/containerizer.cpp:282-299</code></td></tr>
-            <tr><td>Module isolators are created, and prepare, in <code>--isolation</code> order</td><td><code>containerizer.cpp:482-500</code>, prepare chain at <code>:1539</code></td></tr>
-            <tr><td>Module needs a units file and NVML discovery to load</td><td><code>src/modules/gpu/gpu_isolator.cpp</code>, <code>create()</code></td></tr>
-            <tr><td>Module always declares device files and sets no <code>CUDA_VISIBLE_DEVICES</code></td><td><code>gpu_isolator.cpp</code>, <code>declare()</code></td></tr>
-            <tr><td>docker_shell ledger, lowest free first, whole GPUs only; <code>recover()</code> does nothing</td><td><code>src/node/containerizer/docker_shell/docker_shell_containerizer.cpp:76-185</code></td></tr>
-            <tr><td>A task's own environment overrides an isolator's</td><td><code>src/launcher/executor.cpp:738-768</code></td></tr>
+            <tr><td>A mode parameter on the existing module (for example <code>enforce=false</code>)</td><td>Every placement and declaration path gains a branch on the parameter, and the offer still carries nothing a framework can read.</td></tr>
+            <tr><td>A separate in-tree <code>gpu/assign</code> isolator</td><td>Adds a third placement ledger beside docker_shell's and the module's, with its own checkpoint format.</td></tr>
+            <tr><td>A RunPod-specific containerizer</td><td>Reimplements launch, sandbox, logging and recovery, and adds a third ledger. The distinguishing property is the absence of cgroup privilege, which is not specific to one provider.</td></tr>
+            <tr><td>Assign frameworks or teams to specific pods or GPUs</td><td>Static allocation replaces offers to any framework, which is the scheduling model medios exists to provide.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>7. Open questions</h2>
+      <div className="wrap">
+        <table>
+          <thead><tr><th>Type</th><th>Question</th><th>Decision it informs</th><th>How it will be answered</th></tr></thead>
+          <tbody>
+            <tr><td>Hypothesis</td><td>RunPod pods expose no writable cgroup hierarchy. Inferred from the absence of privileged mode (observed 2026-11-10); not probed.</td><td>Whether an unprivileged node could ever list <code>gpu/devices</code>.</td><td>Inspect <code>/sys/fs/cgroup</code> on the next GPU pod.</td></tr>
+            <tr><td>Research question</td><td>Should <code>CUDA_VISIBLE_DEVICES</code> carry <code>GPU-</code>UUIDs, or NVML indices with <code>CUDA_DEVICE_ORDER=PCI_BUS_ID</code>? Some tools may parse the variable as integers (unverified).</td><td>The value <code>gpu/assign</code> writes.</td><td>Run PyTorch, vLLM and Ray device discovery under both forms on the next GPU pod, before the implementation merges.</td></tr>
+            <tr><td>Open design</td><td>How the node derives the <code>gpu_isolation</code> attribute from the isolators it loaded, so the attribute can't disagree with <code>--isolation</code>.</td><td>What frameworks filter on.</td><td>Decided in the implementation PR; today node attributes come only from <code>--attributes</code>.</td></tr>
+            <tr><td>Open design</td><td>Can <code>gpu/devices</code> detect a missing or misordered <code>gpu/assign</code> at node start rather than at first launch? A module's <code>create()</code> receives only its own parameters, not <code>--isolation</code>.</td><td>Whether misconfiguration fails at start or at first GPU launch.</td><td>Decided in the implementation PR.</td></tr>
+            <tr><td>Deferred</td><td>docker_shell moves to the shared ledger, which also fixes its empty ledger after restart (#149).</td><td>Whether medios keeps one placement ledger on every node type.</td><td>Separate issue.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>8. Sources</h2>
+      <div className="wrap">
+        <table>
+          <thead><tr><th>Behaviour</th><th>Location</th></tr></thead>
+          <tbody>
+            <tr><td>Launch refused when isolators declare devices and <code>--isolation</code> lacks <code>cgroups/devices</code> and <code>cgroups/all</code></td><td><code>src/node/containerizer/medios/containerizer.cpp:282-299</code></td></tr>
+            <tr><td>Module isolators created in <code>--isolation</code> order; an unknown name fails node start</td><td><code>containerizer.cpp:482-516</code></td></tr>
+            <tr><td>Isolator <code>prepare()</code> calls chained sequentially</td><td><code>containerizer.cpp:1539</code></td></tr>
+            <tr><td>Module requires the units file and NVML discovery</td><td><code>src/modules/gpu/gpu_isolator.cpp:663-724</code></td></tr>
+            <tr><td>Module places by UUID, records only whole claims, releases at cleanup</td><td><code>gpu_isolator.cpp:214-300</code>, <code>:446-470</code></td></tr>
+            <tr><td>Module declares device files and sets library paths, not <code>CUDA_VISIBLE_DEVICES</code></td><td><code>gpu_isolator.cpp:489-614</code></td></tr>
+            <tr><td>Placement checkpoint per container</td><td><code>src/modules/gpu/checkpoint.cpp:47</code></td></tr>
+            <tr><td>Share claims allowed only for a resource declared over one device</td><td><code>src/modules/gpu/units.cpp:325-345</code></td></tr>
+            <tr><td>docker_shell ledger and no-op <code>recover()</code></td><td><code>src/node/containerizer/docker_shell/docker_shell_containerizer.cpp:76-185</code></td></tr>
+            <tr><td>A task command's environment overrides an isolator's <code>task_environment</code></td><td><code>src/launcher/executor.cpp:738-768</code></td></tr>
           </tbody>
         </table>
       </div>
