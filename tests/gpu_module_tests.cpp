@@ -69,7 +69,11 @@ namespace medios {
 namespace internal {
 namespace tests {
 
-static const string GPU_MODULE_NAME = "com_medioslab_medios_gpu";
+// The library registers two isolators (medios#45). Most cases load only the
+// assignment isolator, which needs NVML and a units file and nothing from the
+// cgroup hierarchy; the device isolator is loaded where a case is about it.
+static const string GPU_MODULE_NAME = "com_medioslab_medios_gpu_assign";
+static const string GPU_DEVICES_MODULE_NAME = "com_medioslab_medios_gpu_devices";
 
 
 // A units file for whatever this host actually has, written into the test's
@@ -107,18 +111,24 @@ static Option<string> writeUnitsFileForThisHost()
 }
 
 
-static Modules gpuModules(const string& units)
+// One library entry naming each of `names`, every one given the same units
+// file, which is how an operator configures the two GPU isolators together.
+static Modules gpuModules(
+    const string& units,
+    const vector<string>& names = {GPU_MODULE_NAME})
 {
   Modules modules;
   Modules::Library* library = modules.add_libraries();
   library->set_file(MEDIOS_GPU_MODULE_PATH);
 
-  Modules::Library::Module* module = library->add_modules();
-  module->set_name(GPU_MODULE_NAME);
+  foreach (const string& name, names) {
+    Modules::Library::Module* module = library->add_modules();
+    module->set_name(name);
 
-  Parameter* parameter = module->add_parameters();
-  parameter->set_key("units");
-  parameter->set_value(units);
+    Parameter* parameter = module->add_parameters();
+    parameter->set_key("units");
+    parameter->set_value(units);
+  }
 
   return modules;
 }
@@ -141,8 +151,10 @@ class GpuModuleTest : public MediosTest
 protected:
   void TearDown() override
   {
-    if (ModuleManager::contains<Isolator>(GPU_MODULE_NAME)) {
-      ASSERT_SOME(ModuleManager::unload(GPU_MODULE_NAME));
+    for (const string& name : {GPU_MODULE_NAME, GPU_DEVICES_MODULE_NAME}) {
+      if (ModuleManager::contains<Isolator>(name)) {
+        ASSERT_SOME(ModuleManager::unload(name));
+      }
     }
 
     MediosTest::TearDown();
@@ -160,12 +172,16 @@ TEST_F(GpuModuleTest, LoadsThroughModuleManager)
                  << "declared over. Covered by a run on a GPU host.";
   }
 
-  ASSERT_SOME(ModuleManager::load(gpuModules(*units)));
-  ASSERT_TRUE(ModuleManager::contains<Isolator>(GPU_MODULE_NAME));
+  ASSERT_SOME(ModuleManager::load(
+      gpuModules(*units, {GPU_MODULE_NAME, GPU_DEVICES_MODULE_NAME})));
 
-  Try<Isolator*> isolator = ModuleManager::create<Isolator>(GPU_MODULE_NAME);
-  ASSERT_SOME(isolator);
-  delete isolator.get();
+  for (const string& name : {GPU_MODULE_NAME, GPU_DEVICES_MODULE_NAME}) {
+    ASSERT_TRUE(ModuleManager::contains<Isolator>(name)) << name;
+
+    Try<Isolator*> isolator = ModuleManager::create<Isolator>(name);
+    ASSERT_SOME(isolator) << name;
+    delete isolator.get();
+  }
 }
 
 
@@ -188,6 +204,44 @@ TEST_F(GpuModuleTest, AUnitsFileThisHostCannotHonourRefusesTheIsolator)
   ASSERT_TRUE(ModuleManager::contains<Isolator>(GPU_MODULE_NAME));
 
   EXPECT_ERROR(ModuleManager::create<Isolator>(GPU_MODULE_NAME));
+}
+
+
+// One library, two registered isolators: both names load from the one
+// manifest entry, and each refuses to construct over a units file this host
+// cannot honour, so the device isolator checks its declaration as strictly as
+// the assignment isolator does. Needs no GPU.
+TEST_F(GpuModuleTest, BothIsolatorsLoadFromOneLibraryAndCheckTheirUnits)
+{
+  const string path = path::join(os::getcwd(), "absent.json");
+
+  ASSERT_SOME(os::write(
+      path,
+      "{\"units\": [{\"resource\": \"gpus\", \"per_device\": 1, "
+      "\"devices\": [\"GPU-not-on-any-host\"]}]}"));
+
+  ASSERT_SOME(ModuleManager::load(
+      gpuModules(path, {GPU_MODULE_NAME, GPU_DEVICES_MODULE_NAME})));
+
+  ASSERT_TRUE(ModuleManager::contains<Isolator>(GPU_MODULE_NAME));
+  ASSERT_TRUE(ModuleManager::contains<Isolator>(GPU_DEVICES_MODULE_NAME));
+
+  EXPECT_ERROR(ModuleManager::create<Isolator>(GPU_MODULE_NAME));
+  EXPECT_ERROR(ModuleManager::create<Isolator>(GPU_DEVICES_MODULE_NAME));
+}
+
+
+// The name the library registered before medios#45 is gone, so a node still
+// configured with it fails at start rather than running without a GPU
+// isolator it believes it has.
+TEST_F(GpuModuleTest, TheCombinedIsolatorNameIsNoLongerRegistered)
+{
+  Modules modules;
+  Modules::Library* library = modules.add_libraries();
+  library->set_file(MEDIOS_GPU_MODULE_PATH);
+  library->add_modules()->set_name("com_medioslab_medios_gpu");
+
+  EXPECT_ERROR(ModuleManager::load(modules));
 }
 
 
@@ -1348,11 +1402,76 @@ TEST(GpuPlacementTest, APartialSeatOverSeveralDevicesIsRefusedRatherThanGuessed)
 }
 
 
+// --- reading an assignment back by identity ----------------------------------
+//
+// `devicesByUuid()` is how recover() and the device isolator turn the UUIDs a
+// checkpoint holds back into devices with this process's index and minor
+// number (medios#45, medios#471).
+
+// The devices come back in the order the UUIDs were written, which is the
+// order they were assigned, not the order the units file lists them.
+TEST(GpuUnitsTest, DevicesByUuidKeepsTheAssignedOrder)
+{
+  const UnitSet unit = unitOf("gpus", 1, {"GPU-a", "GPU-b", "GPU-c"});
+
+  Try<vector<Device>> devices =
+    medios::modules::gpu::devicesByUuid(unit, {"GPU-c", "GPU-a"});
+
+  ASSERT_SOME(devices);
+  ASSERT_EQ(2u, devices->size());
+  EXPECT_EQ("GPU-c", devices->at(0).uuid);
+  EXPECT_EQ(2u, devices->at(0).minorNumber);
+  EXPECT_EQ("GPU-a", devices->at(1).uuid);
+  EXPECT_EQ(0u, devices->at(1).minorNumber);
+}
+
+
+// A UUID the unit does not declare refuses the whole set, naming the UUID and
+// the resource, rather than returning the devices it did find.
+TEST(GpuUnitsTest, DevicesByUuidRefusesAnUndeclaredDeviceByName)
+{
+  const UnitSet unit = unitOf("gpus", 1, {"GPU-a"});
+
+  Try<vector<Device>> devices =
+    medios::modules::gpu::devicesByUuid(unit, {"GPU-a", "GPU-gone"});
+
+  ASSERT_ERROR(devices);
+  EXPECT_TRUE(strings::contains(devices.error(), "GPU-gone")) << devices.error();
+  EXPECT_TRUE(strings::contains(devices.error(), "'gpus'")) << devices.error();
+}
+
+
+// --- CUDA_VISIBLE_DEVICES ----------------------------------------------------
+
+// The assignment isolator names devices by UUID, comma-separated, in the
+// order they were assigned. Indices would be wrong wherever CUDA's default
+// fastest-first order differs from NVML's.
+TEST(GpuDeliveryTest, VisibleDevicesNamesTheAssignedUuidsInOrder)
+{
+  EXPECT_EQ(
+      "GPU-b",
+      medios::modules::gpu::visibleDevices(hostOf({"GPU-b"})));
+
+  EXPECT_EQ(
+      "GPU-b,GPU-a",
+      medios::modules::gpu::visibleDevices(hostOf({"GPU-b", "GPU-a"})));
+}
+
+
+// An empty assignment is an empty value. The isolator never sets the variable
+// for a container with no GPU claim; this pins what the helper would say.
+TEST(GpuDeliveryTest, VisibleDevicesOfNothingIsEmpty)
+{
+  EXPECT_EQ("", medios::modules::gpu::visibleDevices({}));
+}
+
+
 // --- the allocation checkpoint -----------------------------------------------
 //
 // What recover() reads back to rebuild the ledger a node restart would
-// otherwise lose (medios#471). A free function, not a method on the
-// isolator, for the same reason `place()` is: `GpuIsolator` is Linux-only and
+// otherwise lose (medios#471), and what the device isolator reads to learn a
+// container's assignment (medios#45). A free function, not a method on an
+// isolator, for the same reason `place()` is: both isolators are Linux-only and
 // defined inside the module's translation unit, so no test reaches its
 // recover() either. These cases run against a real scratch directory rather
 // than a fake filesystem, since the whole point is round-tripping through

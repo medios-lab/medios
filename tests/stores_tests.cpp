@@ -351,7 +351,8 @@ TEST(StoresTest, DeliveryIsDecidedByTheContainerizerLauncherAndIsolation)
   EXPECT_SOME(node::checkStoreDelivery(
       "medios", "linux",
       "filesystem/linux,docker/runtime,cgroups/devices,cgroups/cpu,"
-      "cgroups/mem,com_medioslab_medios_gpu"));
+      "cgroups/mem,com_medioslab_medios_gpu_assign,"
+      "com_medioslab_medios_gpu_devices"));
   EXPECT_SOME(node::checkStoreDelivery("docker_shell", "posix", ""));
   EXPECT_SOME(node::checkStoreDelivery("docker_shell,medios", "posix", ""));
   EXPECT_SOME(node::checkStoreDelivery("medios", "posix", ""));
