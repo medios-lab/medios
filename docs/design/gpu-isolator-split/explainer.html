@@ -7,6 +7,7 @@
 <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<script src="https://unpkg.com/mermaid@10.9.1/dist/mermaid.min.js"></script>
 <style>
   :root {
     --bg: #F4F6F9; --card: #FFFFFF; --line: #DDE3EC; --fg: #1F2933; --muted: #5A6577;
@@ -21,9 +22,12 @@
   h2 { font-size: 1.12rem; margin: 34px 0 8px; color: var(--blue); }
   h3 { font-size: 1rem; margin: 18px 0 6px; }
   p { margin: 6px 0 12px; }
+  ol { margin: 6px 0 12px; padding-left: 22px; }
+  ol li { margin-bottom: 8px; }
   code { font: 0.87em ui-monospace, SFMono-Regular, Menlo, monospace; background: #EEF1F5; padding: 1px 4px; border-radius: 3px; }
   pre { font: 0.84em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: #EEF1F5; padding: 10px 12px;
     border-radius: 6px; overflow-x: auto; margin: 6px 0 12px; }
+  pre.mermaid { background: var(--card); border: 1px solid var(--line); }
   .meta { color: var(--muted); font-size: 0.9rem; margin-bottom: 18px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
   .wide { max-width: 1140px; margin: 0 auto; padding: 0 18px; }
@@ -33,6 +37,7 @@
   table { border-collapse: collapse; width: 100%; min-width: 640px; background: var(--card); }
   th, td { border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top; font-size: 0.87rem; }
   th { background: #EEF1F5; font-weight: 600; }
+  tr.proposed td { background: #F6FAF8; }
   .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 12px; }
   label.ctl { display: block; font-size: 0.84rem; color: var(--muted); }
   select, input[type=range] { width: 100%; margin-top: 4px; font: inherit; }
@@ -54,30 +59,30 @@
 <div id="root"></div>
 
 <script type="text/babel">
-const { useState } = React;
+const { useState, useEffect } = React;
 
-// Behaviour model for appendix A: one node with two GPUs, tasks that each
-// request gpus:1. Each rule cites a row of appendix B.
+// Behaviour model for appendix A: one medios node with two GPUs, tasks that
+// each request gpus:1. Each rule cites a row of appendix B.
 
 const NODES = {
-  unpriv: "Node without cgroups/devices (RunPod pod)",
-  priv: "Linux node with cgroups/devices",
+  unpriv: "medios node inside a RunPod pod (cannot create cgroups)",
+  priv: "medios node on a Linux host with cgroups/devices",
 };
 
 const CONFIGS = {
   none: "Current: no GPU isolator",
-  module: "Current: GPU module",
+  module: "Current: com_medioslab_medios_gpu",
   assign: "Proposed: gpu/assign",
   both: "Proposed: gpu/assign,gpu/devices",
   devicesOnly: "Proposed, misconfigured: gpu/devices alone",
 };
 
-const DEVICE_REFUSAL = "launch refused by the containerizer: device declarations without cgroups/devices (containerizer.cpp:282-299)";
+const DEVICE_REFUSAL = "launch refused by the medios containerizer: device declarations without cgroups/devices (containerizer.cpp:282-299)";
 const NO_PLACEMENT = "launch refused by gpu/devices prepare(): no assignment recorded for this container (proposed)";
 
 function mechanism(node, config) {
-  const none = { label: "No component chooses a device", places: false, env: false, enforces: false, persists: false, advertised: null };
-  const module = { label: "GPU module: assignment by UUID and device cgroup; no CUDA_VISIBLE_DEVICES", places: true, env: false, enforces: true, persists: true, advertised: null };
+  const none = { label: "No GPU isolator: CUDA uses device 0 unless the task's command sets CUDA_VISIBLE_DEVICES", places: false, env: false, enforces: false, persists: false, advertised: null };
+  const module = { label: "com_medioslab_medios_gpu: assignment by UUID and device cgroup; no CUDA_VISIBLE_DEVICES", places: true, env: false, enforces: true, persists: true, advertised: null };
   const assign = { label: "gpu/assign: assignment by UUID and CUDA_VISIBLE_DEVICES; no device cgroup", places: true, env: true, enforces: false, persists: true, advertised: "gpu_isolation:assign" };
   const both = { label: "gpu/assign + gpu/devices: assignment, CUDA_VISIBLE_DEVICES and device cgroup", places: true, env: true, enforces: true, persists: true, advertised: "gpu_isolation:assign,devices" };
   const refused = (reason) => ({ label: "Launch refused", refused: reason, places: false, env: false, enforces: false, persists: false, advertised: null });
@@ -143,7 +148,7 @@ function Diagram({ sim, restart }) {
           <text x={tx + 10} y={ty(r.i) + 20} fontSize="12.5" fontWeight="600" fill="#1F2933">Task {r.i + 1} ({r.framework})</text>
           <text x={tx + 10} y={ty(r.i) + 37} fontSize="11" fill={colour(r)}>
             {r.state === "running" ? (r.shared ? "shares a GPU" : "sole user of its GPU") : r.state}
-            {restart && r.i >= 1 && r.state !== "not launched" ? " (after node restart)" : ""}</text>
+            {restart && r.i >= 1 && r.state !== "not launched" ? " (after medios-node restart)" : ""}</text>
         </g>
       ))}
       {[0, 1].map(d => (
@@ -186,12 +191,12 @@ function BehaviourModel() {
   return (
     <div className="card">
       <div className="controls">
-        <label className="ctl">Node
+        <label className="ctl">medios node
           <select value={node} onChange={e => setNode(e.target.value)}>
             {Object.entries(NODES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
         </label>
-        <label className="ctl">GPU isolation in --isolation
+        <label className="ctl">GPU isolators in --isolation
           <select value={config} onChange={e => setConfig(e.target.value)}>
             {Object.entries(CONFIGS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
@@ -210,7 +215,7 @@ function BehaviourModel() {
         <div className={"kpi " + (shared ? "bad" : "good")}><b>{shared}</b><span>running tasks sharing a GPU</span></div>
         <div className={"kpi " + (exposed ? "warn" : "good")}><b>{exposed}</b><span>running tasks that can open an unassigned GPU</span></div>
         <div className={"kpi " + (refused ? "bad" : "good")}><b>{refused}</b><span>launches refused</span></div>
-        <div className={"kpi " + (sim.m.advertised ? "good" : "warn")}><b>{sim.m.advertised ? "yes" : "no"}</b><span>isolation mode in the offer</span></div>
+        <div className={"kpi " + (sim.m.advertised ? "good" : "warn")}><b>{sim.m.advertised ? "yes" : "no"}</b><span>gpu_isolation attribute in the offer</span></div>
       </div>
       <div className="grid-2">
         <div><Diagram sim={sim} restart={restart} /></div>
@@ -226,84 +231,117 @@ function BehaviourModel() {
   );
 }
 
+const FAILURE_SEQUENCE = `sequenceDiagram
+    participant F as Framework
+    participant C as medios controller
+    participant N as medios-node (medios containerizer)
+    participant I as Isolators in --isolation
+    participant E as Command executor
+    participant T as Task process (CUDA)
+    F->>C: launch task, resources gpus:1
+    C->>N: run task on this node
+    N->>I: prepare(container)
+    I-->>N: no GPU environment, no device declarations
+    N->>E: start executor, environment without CUDA_VISIBLE_DEVICES
+    E->>T: exec task command
+    T->>T: cuInit enumerates all GPUs, uses device 0
+    Note over F,T: Derived from the code path and CUDA defaults, not run.`;
+
 function App() {
+  useEffect(() => {
+    mermaid.initialize({ startOnLoad: false, theme: "neutral" });
+    mermaid.run({ querySelector: "pre.mermaid" });
+  }, []);
   return (
     <div>
       <div className="page">
-        <h1>Separate GPU assignment from GPU device isolation</h1>
+        <h1>Separate GPU assignment from GPU device isolation in the medios GPU module</h1>
         <div className="meta">Design proposal for medios#45 · Status: proposed · Component: <code>src/modules/gpu</code> · Code references are to medios-lab/medios master and are listed in appendix B</div>
 
-        <h2>The failure</h2>
-        <p>Medios tracks how many GPUs a task receives, but it leaves the choice of physical devices to the node. On the RunPod pods medios currently runs on, no node component makes that choice. We observed this on 2026-11-26 on a pod with two A100s. The node advertised <code>gpus:2</code>, the controller recorded both as allocated, and tabular-bench's tasks were running on the pod. Those tasks used separate devices only because tabular-bench wrote <code>CUDA_VISIBLE_DEVICES=0</code> and <code>CUDA_VISIBLE_DEVICES=1</code> into its own commands.</p>
-        <p>That node ran the medios containerizer with no GPU isolator in <code>--isolation</code>. When a task asks for <code>gpus:1</code>, the containerizer prepares the container, and none of the listed isolators looks at the <code>gpus</code> resource. The executor then starts the command with the environment it was given, which contains no <code>CUDA_VISIBLE_DEVICES</code>. CUDA enumerates every device it can open and, by default, uses device 0. A task from another framework would therefore have run on device 0 alongside whichever tabular-bench task already held it. That outcome follows from the code path and CUDA's default behaviour; we did not run such a task.</p>
+        <h2>Tasks on a medios node inside a RunPod pod use GPU 0 unless their commands set CUDA_VISIBLE_DEVICES</h2>
+        <p>On 2026-11-26 a medios node running inside a RunPod pod with two A100 GPUs advertised <code>gpus:2</code>. The medios controller recorded both GPUs as allocated to tabular-bench tasks. Those tasks ran on separate GPUs because tabular-bench's commands set <code>CUDA_VISIBLE_DEVICES=0</code> and <code>CUDA_VISIBLE_DEVICES=1</code>.</p>
+        <p>The medios node used the medios containerizer, and its <code>--isolation</code> flag listed no GPU isolator. The path a task from any other framework takes on that node:</p>
+        <pre className="mermaid">{FAILURE_SEQUENCE}</pre>
+        <p>A second framework's <code>gpus:1</code> task would have run on GPU 0 while a tabular-bench task was using it.</p>
 
-        <h2>Why the existing GPU module does not run there</h2>
-        <p>Medios already has a component that chooses devices. The GPU module, <code>libmedios_gpu.so</code>, loads as an isolator through <code>--modules</code> and <code>--isolation</code>. When a container is prepared, the module assigns the container's grant (the quantity of <code>gpus</code> in its resources) to specific devices, identified by NVML UUID. It keeps those assignments in an in-memory ledger, so the next container gets a device no one holds. It also writes each assignment to a checkpoint in the container's directory, so <code>recover()</code> can rebuild the ledger when medios-node restarts while containers keep running.</p>
-        <p>Every assignment the module makes also produces device declarations: the <code>/dev/nvidia*</code> files the container may open. The containerizer grants those through the cgroup devices controller. If any isolator returns declarations and <code>--isolation</code> lists neither <code>cgroups/devices</code> nor <code>cgroups/all</code>, the containerizer refuses the launch. On a RunPod pod, enabling <code>cgroups/devices</code> would require a writable cgroup hierarchy. We have assumed the pods do not provide one, because they run unprivileged (observed 2026-11-10), but we have not inspected <code>/sys/fs/cgroup</code> on a pod. If a pod does expose a writable devices hierarchy, the module could run there unchanged, and the case for this proposal would rest only on the reasons in the next two sections.</p>
-        <p>The docker_shell containerizer, the other place medios assigns GPUs, needs a Docker daemon, and the pods have none (observed 2026-11-10). Its ledger also does not survive a node restart, because its <code>recover()</code> does nothing (#149).</p>
+        <h2>The medios containerizer refuses the GPU module's device declarations without cgroups/devices, which a RunPod pod cannot provide</h2>
+        <p>The GPU module, <code>libmedios_gpu.so</code>, registers one isolator, <code>com_medioslab_medios_gpu</code>, implemented by the class <code>GpuIsolator</code> in <code>src/modules/gpu/gpu_isolator.cpp</code>. Its <code>prepare()</code> assigns devices to each container by NVML UUID and writes the assignment to a checkpoint in the container's directory. Then it calls <code>declare()</code>, which returns device declarations for the <code>/dev/nvidia*</code> files the container may open. The medios containerizer enforces those declarations through the cgroup devices controller. When an isolator returns declarations and <code>--isolation</code> lists neither <code>cgroups/devices</code> nor <code>cgroups/all</code>, the containerizer refuses the launch (<code>containerizer.cpp:282-299</code>).</p>
+        <p>A RunPod pod cannot provide <code>cgroups/devices</code>. On 2026-11-27 we inspected a Secure Cloud pod with one A40 GPU in EU-SE-1. It runs cgroup v1, and the devices hierarchy is mounted read-write. But container root is mapped into a user namespace (<code>uid_map 0 165536 65536</code>) and has no <code>CAP_SYS_ADMIN</code>, so creating a child devices cgroup fails with <code>Permission denied</code>. The commands and their output are in <code>cgroup-probe-2026-11-27.md</code> beside this page.</p>
 
-        <h2>Proposal</h2>
-        <p>Assignment and device isolation are independent in the module's code. Only device isolation needs the cgroup. The proposal splits the module into two isolators in the same library, sharing one ledger.</p>
-        <p><code>gpu/assign</code> keeps the assignment, the ledger, the checkpoint, recovery and release. It adds one behaviour the module lacks today: it sets <code>CUDA_VISIBLE_DEVICES</code> to the assigned devices. For a command task the variable goes into the task environment, and for any other container into the container environment, matching how the module already passes its library paths. <code>gpu/assign</code> returns no device declarations, so the containerizer accepts it on a node without <code>cgroups/devices</code>.</p>
-        <p><code>gpu/devices</code> keeps everything that touches device access: the declarations, the device mounts for a container with its own root filesystem, and the driver-volume injection. Its <code>prepare()</code> reads the container's assignment from the shared ledger and fails if there is none. It depends on <code>gpu/assign</code> having prepared the container first. The containerizer creates module isolators in <code>--isolation</code> order and runs their <code>prepare()</code> calls one after another in that order, so listing <code>gpu/assign</code> first satisfies the dependency.</p>
-        <p>An operator chooses between the two modes in <code>--isolation</code> alone:</p>
-        <pre># node without cgroups/devices
---isolation=posix/cpu,posix/mem,gpu/assign
-
-# node with cgroups/devices
---isolation=cgroups/all,gpu/assign,gpu/devices</pre>
-        <p>The first configuration costs isolation. <code>CUDA_VISIBLE_DEVICES</code> controls which devices CUDA uses, but a task can override it in its own command, and the task environment the isolator sets loses to the command's (<code>executor.cpp:738-768</code>). A task can also open <code>/dev/nvidia*</code> directly. On such a node, medios gives each task a distinct device and tells it which one, but it relies on the task to stay there. A framework that needs enforced isolation has to be able to tell the two kinds of node apart before it launches anything. For that, the node would report its mode as an offer attribute, for example <code>gpu_isolation:assign</code> or <code>gpu_isolation:assign,devices</code>. How the node derives that attribute is open (see "What remains unverified").</p>
-        <p>The module also supports shares, grants smaller than one device. It accepts a share only for a resource declared over a single device, and it records no assignment for it (<code>units.cpp:325-345</code>). The split changes none of that. Where only <code>gpu/assign</code> runs, nothing limits the memory or compute of tasks sharing a device. Our provisional default for such nodes is therefore a units file that declares whole devices.</p>
-
+        <h2>Proposal: split GpuIsolator into an assignment isolator and a device isolator in libmedios_gpu.so</h2>
+        <p>The change is to <code>GpuIsolator</code> and to the symbols <code>libmedios_gpu.so</code> registers.</p>
+        <ul>
+          <li><code>GpuIsolator</code> keeps <code>prepare()</code> up to the checkpoint write (<code>gpu_isolator.cpp:214-300</code>), plus <code>recover()</code>, <code>update()</code> and <code>cleanup()</code>. It stops calling <code>declare()</code>. Its <code>prepare()</code> also sets <code>CUDA_VISIBLE_DEVICES</code> to the assigned devices, which the module does not do today. For a command task it writes the variable to the task environment; for any other container it writes the container environment. That is the same split <code>injectVolume()</code> already makes for library paths (<code>:609-614</code>).</li>
+          <li>A new class, <code>GpuDevicesIsolator</code>, takes over <code>declare()</code> (<code>:489</code>) and <code>injectVolume()</code> (<code>:562</code>). Its <code>prepare()</code> reads the container's assignment and fails if none is recorded.</li>
+          <li>The ledger moves out of <code>GpuIsolator</code> into an object that both classes hold. It consists of the members <code>allocations</code>, <code>bound</code> and <code>recovered</code> (<code>:641-649</code>), plus the mutex that guards them.</li>
+          <li>The library registers two symbols in place of <code>com_medioslab_medios_gpu</code>: <code>com_medioslab_medios_gpu_assign</code> for <code>GpuIsolator</code> and <code>com_medioslab_medios_gpu_devices</code> for <code>GpuDevicesIsolator</code>. The rest of this page writes them as <code>gpu/assign</code> and <code>gpu/devices</code>.</li>
+        </ul>
+        <p>The medios containerizer creates module isolators in <code>--isolation</code> order (<code>containerizer.cpp:482-516</code>) and runs their <code>prepare()</code> calls one after another (<code>:1539</code>). Listing <code>gpu/assign</code> before <code>gpu/devices</code> therefore guarantees that the assignment exists when <code>gpu/devices</code> reads it.</p>
         <div className="wrap">
           <table>
-            <thead><tr><th>Isolator hook</th><th>gpu/assign</th><th>gpu/devices</th></tr></thead>
+            <thead><tr><th>Isolator hook</th><th>gpu/assign (<code>GpuIsolator</code>)</th><th>gpu/devices (<code>GpuDevicesIsolator</code>)</th></tr></thead>
             <tbody>
               <tr><td><code>prepare()</code></td><td>Assign devices, write checkpoint, return <code>CUDA_VISIBLE_DEVICES</code></td><td>Read assignment; return declarations, device mounts, driver volume; fail if no assignment</td></tr>
               <tr><td><code>recover()</code></td><td>Rebuild ledger from checkpoints</td><td>None; uses the rebuilt ledger</td></tr>
-              <tr><td><code>update()</code></td><td>As today: growth beyond assigned devices refused</td><td>As today: access not revoked on shrink</td></tr>
+              <tr><td><code>update()</code></td><td>Unchanged: growth beyond assigned devices refused</td><td>Unchanged: access not revoked on shrink</td></tr>
               <tr><td><code>cleanup()</code></td><td>Release assignment, remove checkpoint</td><td>None</td></tr>
-              <tr><td>Fails when</td><td>Units file missing or invalid, or NVML unavailable (as today)</td><td><code>cgroups/devices</code> absent (containerizer check), or no assignment from <code>gpu/assign</code></td></tr>
+              <tr><td>Fails when</td><td>Units file missing or invalid, or NVML unavailable (unchanged, <code>:663-724</code>)</td><td><code>cgroups/devices</code> absent (containerizer check), or no assignment from <code>gpu/assign</code></td></tr>
             </tbody>
           </table>
         </div>
-        <p className="src">The names <code>gpu/assign</code> and <code>gpu/devices</code> stand in for the module symbols the implementation will register (the current symbol is <code>com_medioslab_medios_gpu</code>).</p>
 
-        <h2>Alternatives</h2>
-        <h3>A mode parameter on the existing module</h3>
-        <p>The module could take a parameter in its <code>modules.json</code> entry, such as <code>enforce=false</code>, that skips the declarations. That gives the same runtime behaviour as the split, and it could expose an offer attribute too. The evidence does not rule it out, so the choice between the two is a judgment for the reviewer.</p>
-        <p>The split is preferred for two reasons. First, the mode then lives in one place. With a parameter, whether a node enforces device access depends on both the module parameter and <code>--isolation</code>, and an operator has to keep them consistent. With the split, <code>--isolation</code> alone states it, and the containerizer's existing check already refuses <code>gpu/devices</code> without <code>cgroups/devices</code>. Second, medios-node parses <code>--isolation</code> itself (<code>containerizer.cpp:482-516</code>), so it could derive the attribute from the isolator names it loaded. A module parameter reaches only the module's <code>create()</code>, so the module would have to report the mode back to the node through an interface that does not exist yet.</p>
-        <p>The split has its own costs. The ledger and the mutex that guards it (<code>gpu_isolator.cpp:89-93</code>) become state shared between two isolator objects, and <code>gpu/devices</code> gains an ordering dependency on <code>gpu/assign</code>. No module in <code>src/modules</code> registers two isolators today, so this would set the pattern.</p>
-        <h3>A new in-tree assignment isolator</h3>
-        <p>An isolator in <code>src/node/containerizer/medios/isolators</code> could do the assignment without touching the module. It would be a third ledger, alongside docker_shell's and the module's, and a node running both it and the module would assign every grant twice. Rejected for that reason.</p>
-        <h3>A RunPod-specific containerizer</h3>
-        <p>A containerizer for pods would need its own launch, sandbox, logging and recovery, which the medios containerizer already provides, and it would add another ledger. What makes a pod different is that the node lacks cgroup privilege, and that is true of other unprivileged hosts as well. Rejected because it ties core code to one provider for a property that isn't provider-specific.</p>
-        <h3>Dedicating pods or GPUs to frameworks</h3>
-        <p>Reserving each pod or device for one team removes the contention, but it replaces offers to every framework with static allocation. Rejected as a product decision.</p>
+        <h2>Operators select device enforcement by listing GPU isolators in --isolation</h2>
+        <p>When configuring a medios node, the operator lists the GPU isolators in the node's <code>--isolation</code> flag. Listing <code>gpu/assign</code> alone makes the node assign devices and set <code>CUDA_VISIBLE_DEVICES</code> without restricting device access. Listing <code>gpu/assign,gpu/devices</code> also restricts each container to its assigned devices, and requires <code>cgroups/devices</code> or <code>cgroups/all</code> in the same flag.</p>
+        <pre>{`# medios node inside a RunPod pod
+--isolation=posix/cpu,posix/mem,com_medioslab_medios_gpu_assign
 
-        <h2>What remains unverified</h2>
+# medios node on a Linux host with cgroups/devices
+--isolation=cgroups/all,com_medioslab_medios_gpu_assign,com_medioslab_medios_gpu_devices`}</pre>
+        <p>medios-node reports the GPU isolators it loaded as an offer attribute, so a framework that needs enforced isolation can filter on it before launching.</p>
+
+        <h2>GPU paths compared</h2>
         <div className="wrap">
           <table>
-            <thead><tr><th>Claim or question</th><th>Status</th><th>What depends on it</th><th>How it gets settled</th></tr></thead>
+            <thead><tr><th>GPU path</th><th>Device assignment</th><th><code>CUDA_VISIBLE_DEVICES</code></th><th>Task can use an unassigned GPU</th><th>Assignment after medios-node restart</th><th>Host requirement</th><th>Shares of one GPU</th><th>Offer attribute</th></tr></thead>
             <tbody>
-              <tr><td>RunPod pods expose no writable devices cgroup</td><td>Assumed from unprivileged mode; not inspected</td><td>Whether pods need <code>gpu/assign</code>-only mode at all</td><td>Inspect <code>/sys/fs/cgroup</code> on the next GPU pod</td></tr>
-              <tr><td><code>CUDA_VISIBLE_DEVICES</code> as <code>GPU-</code>UUIDs, or NVML indices with <code>CUDA_DEVICE_ORDER=PCI_BUS_ID</code></td><td>Open; some tools may parse the variable as integers (unverified)</td><td>The value <code>gpu/assign</code> writes</td><td>Run PyTorch, vLLM and Ray device discovery under both forms on that pod, before the implementation merges</td></tr>
-              <tr><td>How the node derives the <code>gpu_isolation</code> attribute</td><td>Proposed: from the isolator names in <code>--isolation</code>; node attributes come only from <code>--attributes</code> today</td><td>What frameworks can filter on</td><td>Implementation PR</td></tr>
-              <tr><td>Whether a missing or misordered <code>gpu/assign</code> can fail at node start</td><td>Fails at first GPU launch as proposed; <code>create()</code> does not see <code>--isolation</code></td><td>When an operator learns of the misconfiguration</td><td>Implementation PR</td></tr>
-              <tr><td>docker_shell uses the shared ledger</td><td>Deferred</td><td>One ledger on every node type; fixes #149</td><td>Separate issue</td></tr>
+              <tr><td>docker_shell containerizer</td><td>NVML indices, lowest free first, whole GPUs</td><td>Set through <code>docker run --gpus device=…</code></td><td>No: Docker device rules</td><td>Lost: <code>recover()</code> is a no-op (#149)</td><td>Docker daemon; none in a RunPod pod</td><td>No</td><td>None</td></tr>
+              <tr><td>medios containerizer, no GPU isolator</td><td>None</td><td>Not set</td><td>Yes: every GPU</td><td>Nothing recorded</td><td>None</td><td>Uncontrolled</td><td>None</td></tr>
+              <tr><td>medios containerizer, <code>com_medioslab_medios_gpu</code></td><td>NVML UUIDs from the units file</td><td>Not set</td><td>No: devices cgroup</td><td>Restored from per-container checkpoint</td><td><code>cgroups/devices</code>; not available in a RunPod pod</td><td>Only for a resource declared over one GPU (<code>units.cpp:325-345</code>)</td><td>None</td></tr>
+              <tr className="proposed"><td>Proposed: <code>gpu/assign</code></td><td>NVML UUIDs from the units file</td><td>Set to the assigned devices</td><td>Yes: by overriding <code>CUDA_VISIBLE_DEVICES</code> in its command (<code>executor.cpp:738-768</code>) or opening <code>/dev/nvidia*</code></td><td>Restored from per-container checkpoint</td><td>NVML and a units file</td><td>Allowed by the units file, with no memory or compute limit; the default units file for these nodes declares whole GPUs</td><td><code>gpu_isolation:assign</code></td></tr>
+              <tr className="proposed"><td>Proposed: <code>gpu/assign,gpu/devices</code></td><td>NVML UUIDs from the units file</td><td>Set to the assigned devices</td><td>No: devices cgroup</td><td>Restored from per-container checkpoint</td><td><code>cgroups/devices</code></td><td>Only for a resource declared over one GPU</td><td><code>gpu_isolation:assign,devices</code></td></tr>
             </tbody>
           </table>
         </div>
+
+        <h2>Alternatives</h2>
+        <h3>A mode parameter on com_medioslab_medios_gpu gives the same runtime behaviour</h3>
+        <p>The module could take a parameter in its <code>modules.json</code> entry, such as <code>enforce=false</code>, that skips <code>declare()</code> and <code>injectVolume()</code>. At runtime that behaves the same as the split, and it could expose an offer attribute too. The evidence does not rule it out.</p>
+        <p>The split is preferred for two reasons. With a parameter, whether a node enforces device access depends on both the module parameter and <code>--isolation</code>, and the two have to agree; with the split, <code>--isolation</code> alone states it, and the existing containerizer check refuses <code>gpu/devices</code> without <code>cgroups/devices</code>. Also, medios-node parses <code>--isolation</code> itself (<code>containerizer.cpp:482-516</code>), so it can derive the offer attribute from the isolator names it loaded, whereas a module parameter reaches only the module's <code>create()</code> and medios-node has no interface for reading it back.</p>
+        <p>The split costs two things. The ledger and its mutex become state shared between two isolator objects, and <code>gpu/devices</code> depends on its position after <code>gpu/assign</code> in <code>--isolation</code>. No module in <code>src/modules</code> registers two isolators today, so this would be the first.</p>
+        <h3>A new in-tree assignment isolator adds a third ledger</h3>
+        <p>An isolator in <code>src/node/containerizer/medios/isolators</code> could assign devices without changing the module. It would be a third ledger, alongside docker_shell's and the module's, and a medios node running both it and the module would assign every allocation twice. Rejected.</p>
+        <h3>A RunPod-specific containerizer duplicates the medios containerizer</h3>
+        <p>A containerizer for RunPod pods would need its own launch, sandbox, logging and recovery, which the medios containerizer already provides, and it would add another ledger. The property that matters, a medios-node process that cannot create cgroups, holds on any unprivileged host, not only RunPod. Rejected.</p>
+        <h3>Reserving pods or GPUs per framework replaces offers with static allocation</h3>
+        <p>Reserving each pod or GPU for one framework removes the contention, but it replaces offers to every framework with static allocation. Rejected as a product decision.</p>
+
+        <h2>Recommendation: implement the split, then run the first gpu/assign node inside a RunPod pod</h2>
+        <ol>
+          <li><b>Implementation PR for #45.</b> It moves the ledger into a shared object, adds <code>GpuDevicesIsolator</code>, registers the two symbols, and sets <code>CUDA_VISIBLE_DEVICES</code> from <code>gpu/assign</code>. medios-node derives <code>gpu_isolation</code> from the GPU isolator names in <code>--isolation</code>; today node attributes come only from <code>--attributes</code>, so this is new code in medios-node. Tests cover the hook table above, recovery after a medios-node restart, and a launch refused when <code>gpu/devices</code> runs without <code>gpu/assign</code>.</li>
+          <li><b>Value of <code>CUDA_VISIBLE_DEVICES</code>, settled in that PR before merge.</b> <code>gpu/assign</code> writes the assigned devices as <code>GPU-&lt;uuid&gt;</code> values, which CUDA accepts. PyTorch and Ray device discovery run under that form on a medios node inside a RunPod pod. If either fails, the PR writes NVML indices with <code>CUDA_DEVICE_ORDER=PCI_BUS_ID</code>. Either value is a change inside <code>prepare()</code> and leaves the design unchanged.</li>
+          <li><b>Rerun the 2026-11-26 case.</b> A medios node inside a two-GPU RunPod pod with <code>--isolation=…,com_medioslab_medios_gpu_assign</code> runs one tabular-bench task and one <code>gpus:1</code> task from a second framework, neither setting <code>CUDA_VISIBLE_DEVICES</code>. Pass condition: <code>nvidia-smi</code> shows each process on a different GPU, and the offer carries <code>gpu_isolation:assign</code>.</li>
+          <li><b>docker_shell stays out of scope.</b> Moving it onto the shared ledger would also fix #149, but RunPod pods have no Docker daemon, so the failure above does not depend on it. It gets its own issue.</li>
+        </ol>
       </div>
 
       <div className="wide">
         <h2>Appendix A: behaviour model</h2>
-        <p>One to three tasks, each requesting <code>gpus:1</code>, on a node with two GPUs. Tasks 1 and 3 belong to framework A, task 2 to framework B. The model encodes the rules above; it is not a measurement.</p>
+        <p>One to three tasks, each requesting <code>gpus:1</code>, on a medios node with two GPUs. Tasks 1 and 3 belong to framework A, task 2 to framework B. The model encodes the rules above; it is not a measurement.</p>
         <BehaviourModel />
       </div>
 
       <div className="page">
-        <h2>Appendix B: code references</h2>
+        <h2>Appendix B: code references and evidence</h2>
         <div className="wrap">
           <table>
             <thead><tr><th>Behaviour</th><th>Location</th></tr></thead>
@@ -311,14 +349,17 @@ function App() {
               <tr><td>Launch refused when isolators declare devices and <code>--isolation</code> lacks <code>cgroups/devices</code> and <code>cgroups/all</code></td><td><code>src/node/containerizer/medios/containerizer.cpp:282-299</code></td></tr>
               <tr><td>Module isolators created in <code>--isolation</code> order; unknown name fails node start</td><td><code>containerizer.cpp:482-516</code></td></tr>
               <tr><td>Isolator <code>prepare()</code> calls run sequentially</td><td><code>containerizer.cpp:1539</code></td></tr>
-              <tr><td>Ledger mutex</td><td><code>src/modules/gpu/gpu_isolator.cpp:89-93</code></td></tr>
-              <tr><td>Assignment by UUID; only whole-device claims recorded; release at cleanup</td><td><code>gpu_isolator.cpp:214-300</code>, <code>:446-470</code></td></tr>
-              <tr><td>Device declarations, mounts, driver volume; library paths in task or container environment; no <code>CUDA_VISIBLE_DEVICES</code></td><td><code>gpu_isolator.cpp:489-614</code></td></tr>
-              <tr><td>Units file and NVML required at creation</td><td><code>gpu_isolator.cpp:663-724</code></td></tr>
+              <tr><td><code>GpuIsolator::prepare()</code>: assignment by UUID, checkpoint before <code>declare()</code></td><td><code>src/modules/gpu/gpu_isolator.cpp:214-300</code></td></tr>
+              <tr><td><code>cleanup()</code>: release assignment</td><td><code>gpu_isolator.cpp:446-470</code></td></tr>
+              <tr><td><code>declare()</code>: device declarations and mounts; no <code>CUDA_VISIBLE_DEVICES</code></td><td><code>gpu_isolator.cpp:489</code></td></tr>
+              <tr><td><code>injectVolume()</code>: driver volume, library paths in task or container environment</td><td><code>gpu_isolator.cpp:562-614</code></td></tr>
+              <tr><td>Ledger members <code>allocations</code>, <code>bound</code>, <code>recovered</code>; mutex rationale</td><td><code>gpu_isolator.cpp:641-649</code>, <code>:89-93</code></td></tr>
+              <tr><td>Units file and NVML required at creation; symbol <code>com_medioslab_medios_gpu</code></td><td><code>gpu_isolator.cpp:663-724</code>, <code>:768</code></td></tr>
               <tr><td>Checkpoint file per container</td><td><code>src/modules/gpu/checkpoint.cpp:47</code></td></tr>
               <tr><td>Shares only for a resource over one device</td><td><code>src/modules/gpu/units.cpp:325-345</code></td></tr>
               <tr><td>docker_shell ledger; no-op <code>recover()</code></td><td><code>src/node/containerizer/docker_shell/docker_shell_containerizer.cpp:76-185</code></td></tr>
               <tr><td>Command environment overrides task environment</td><td><code>src/launcher/executor.cpp:738-768</code></td></tr>
+              <tr><td>RunPod pod cannot create a devices cgroup (observed 2026-11-27)</td><td><code>docs/design/gpu-isolator-split/cgroup-probe-2026-11-27.md</code></td></tr>
             </tbody>
           </table>
         </div>
