@@ -65,6 +65,15 @@ string devicePath(const Device& device)
 }
 
 
+// Joins the driver UUIDs of `granted` with commas, in the order given. The
+// assignment isolator passes devices in the order place() returned them, so
+// the first UUID is CUDA device 0 inside the container.
+//
+// CUDA reads each entry as a UUID because it starts with "GPU-", and maps it
+// to the device with that UUID whatever CUDA_DEVICE_ORDER is set to. An index
+// would name a different device wherever CUDA's default order, fastest first,
+// differs from NVML's PCI bus order. The value is the same string NVML reports
+// as the UUID, so no prefix is added.
 string visibleDevices(const vector<Device>& granted)
 {
   string value;

@@ -70,9 +70,10 @@ namespace medios {
 namespace internal {
 namespace tests {
 
-// The library registers two isolators (medios#45). Most cases load only the
-// assignment isolator, which needs NVML and a units file and nothing from the
-// cgroup hierarchy; the device isolator is loaded where a case is about it.
+// The isolator names the GPU module library registers. The assignment
+// isolator needs NVML and a units file but no cgroup hierarchy, so a case that
+// tests assignment loads it alone. A case that tests device declarations loads
+// the device isolator as well.
 static const string GPU_MODULE_NAME = "com_medioslab_medios_gpu_assign";
 static const string GPU_DEVICES_MODULE_NAME = "com_medioslab_medios_gpu_devices";
 
@@ -112,8 +113,11 @@ static Option<string> writeUnitsFileForThisHost()
 }
 
 
-// One library entry naming each of `names`, every one given the same units
-// file, which is how an operator configures the two GPU isolators together.
+// Builds the manifest that medios-node reads from --modules: one library
+// entry for the GPU module, with one module entry for each name in `names`.
+// Every module entry gets a `units` parameter set to `units`. An operator
+// gives both GPU isolators the same units file, because the device isolator
+// looks up each assigned UUID in its own copy of the file.
 static Modules gpuModules(
     const string& units,
     const vector<string>& names = {GPU_MODULE_NAME})
@@ -186,12 +190,18 @@ TEST_F(GpuModuleTest, LoadsThroughModuleManager)
 }
 
 
-// A GPU container through both isolators, in --isolation order: assign
-// places the claim and sets CUDA_VISIBLE_DEVICES, devices reads the
-// checkpoint assign wrote and declares that device's file. A second container
-// prepared by devices alone, the order a node listing them backwards would
-// produce, is refused by name. Needs a GPU: the isolators are constructed
-// only over a units file this host can honour.
+// Prepares a GPU container with the assignment isolator and then the device
+// isolator, the order --isolation lists them in. The assignment isolator's
+// launch info must set CUDA_VISIBLE_DEVICES to the device's UUID. The device
+// isolator's launch info must declare that device's file, read from the
+// checkpoint the assignment isolator wrote.
+//
+// A second container is prepared by the device isolator with no assignment
+// before it, which is what a node gets when --isolation lists the two in the
+// wrong order. Its prepare() must fail with a message naming the right order.
+//
+// Skipped without a GPU, because the isolators are created only over a units
+// file whose devices NVML reports on this host.
 TEST_F(GpuModuleTest, AssignThenDevicesHandsTheAssignmentAcross)
 {
   const Option<string> units = writeUnitsFileForThisHost();
@@ -288,8 +298,9 @@ TEST_F(GpuModuleTest, AssignThenDevicesHandsTheAssignmentAcross)
 }
 
 
-// A command task reads the task environment, so that is where assign puts
-// CUDA_VISIBLE_DEVICES when the container carries a task.
+// The command executor reads the task environment, not the container
+// environment. For a container that carries a task, the assignment isolator
+// must put CUDA_VISIBLE_DEVICES in the task environment.
 TEST_F(GpuModuleTest, AssignPutsTheVariableInTheTaskEnvironmentOfACommandTask)
 {
   const Option<string> units = writeUnitsFileForThisHost();
@@ -354,10 +365,11 @@ TEST_F(GpuModuleTest, AUnitsFileThisHostCannotHonourRefusesTheIsolator)
 }
 
 
-// One library, two registered isolators: both names load from the one
-// manifest entry, and each refuses to construct over a units file this host
-// cannot honour, so the device isolator checks its declaration as strictly as
-// the assignment isolator does. Needs no GPU.
+// A manifest with one library entry that names both isolators loads both
+// names. Each isolator's create() checks the units file against the devices
+// NVML reports and refuses a file naming a device this host does not have.
+// The test runs without a GPU, because its units file names a UUID that no
+// host has.
 TEST_F(GpuModuleTest, BothIsolatorsLoadFromOneLibraryAndCheckTheirUnits)
 {
   const string path = path::join(os::getcwd(), "absent.json");
@@ -378,9 +390,9 @@ TEST_F(GpuModuleTest, BothIsolatorsLoadFromOneLibraryAndCheckTheirUnits)
 }
 
 
-// The name the library registered before medios#45 is gone, so a node still
-// configured with it fails at start rather than running without a GPU
-// isolator it believes it has.
+// The library no longer registers `com_medioslab_medios_gpu`. A manifest that
+// names it fails to load, so a node configured with the old name fails at
+// start instead of running without the GPU isolator its --isolation lists.
 TEST_F(GpuModuleTest, TheCombinedIsolatorNameIsNoLongerRegistered)
 {
   Modules modules;
@@ -1551,9 +1563,10 @@ TEST(GpuPlacementTest, APartialSeatOverSeveralDevicesIsRefusedRatherThanGuessed)
 
 // --- reading an assignment back by identity ----------------------------------
 //
-// `devicesByUuid()` is how recover() and the device isolator turn the UUIDs a
-// checkpoint holds back into devices with this process's index and minor
-// number (medios#45, medios#471).
+// A checkpoint holds device UUIDs. Both isolators turn those UUIDs back into
+// devices with `devicesByUuid()`, which looks up this process's index and minor
+// number for each one: the assignment isolator in recover() after a node
+// restart (medios#471), and the device isolator in every prepare().
 
 // The devices come back in the order the UUIDs were written, which is the
 // order they were assigned, not the order the units file lists them.
@@ -1605,8 +1618,9 @@ TEST(GpuDeliveryTest, VisibleDevicesNamesTheAssignedUuidsInOrder)
 }
 
 
-// An empty assignment is an empty value. The isolator never sets the variable
-// for a container with no GPU claim; this pins what the helper would say.
+// An empty list of devices gives an empty value. The assignment isolator does
+// not set the variable for a container with no GPU claim, so this case only
+// fixes the helper's output for an empty list.
 TEST(GpuDeliveryTest, VisibleDevicesOfNothingIsEmpty)
 {
   EXPECT_EQ("", medios::modules::gpu::visibleDevices({}));
@@ -1615,14 +1629,17 @@ TEST(GpuDeliveryTest, VisibleDevicesOfNothingIsEmpty)
 
 // --- the allocation checkpoint -----------------------------------------------
 //
-// What recover() reads back to rebuild the ledger a node restart would
-// otherwise lose (medios#471), and what the device isolator reads to learn a
-// container's assignment (medios#45). A free function, not a method on an
-// isolator, for the same reason `place()` is: both isolators are Linux-only and
-// defined inside the module's translation unit, so no test reaches its
-// recover() either. These cases run against a real scratch directory rather
-// than a fake filesystem, since the whole point is round-tripping through
-// actual disk across what stands in for two different processes.
+// The assignment isolator writes a checkpoint for each container it assigns.
+// Its recover() reads the checkpoints to rebuild the ledger after a node
+// restart (medios#471), and the device isolator reads a container's
+// checkpoint in prepare() to learn which devices to declare.
+//
+// The read and write functions are free functions, as `place()` is, because
+// both isolators are Linux-only classes defined inside the module's
+// translation unit. A test reaches the isolators only through the module
+// manager on a GPU host. These cases write to a real scratch directory rather
+// than a fake filesystem, because what they check is a round trip through disk
+// between a writer and a later reader.
 
 namespace {
 

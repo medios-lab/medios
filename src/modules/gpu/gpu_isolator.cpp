@@ -12,7 +12,7 @@
 // the Isolator interface, the same seam the cgroups isolators use for cpus
 // and mem.
 //
-// The library registers two isolators (medios#45):
+// The library registers two isolators:
 //
 //   com_medioslab_medios_gpu_assign   Decides at prepare() which devices serve
 //                                     the container's claim, checkpoints that
