@@ -1861,6 +1861,11 @@ Future<Containerizer::LaunchResult> MediosContainerizerProcess::_launch(
     variable->set_value(value);
   }
 
+  // The sandbox path as the container sees it.
+  const string sandboxPath = container->config->has_rootfs()
+    ? flags.sandbox_directory
+    : container->config->directory();
+
   // DEBUG containers inherit MEDIOS_SANDBOX from their parent.
   if (container->containerClass() == ContainerClass::DEFAULT) {
     // TODO(jieyu): Consider moving this to filesystem isolator.
@@ -1871,9 +1876,7 @@ Future<Containerizer::LaunchResult> MediosContainerizerProcess::_launch(
     // itself does not use this environment variable.
     Environment::Variable* variable = containerEnvironment.add_variables();
     variable->set_name("MEDIOS_SANDBOX");
-    variable->set_value(container->config->has_rootfs()
-      ? flags.sandbox_directory
-      : container->config->directory());
+    variable->set_value(sandboxPath);
   }
 
   // `launchInfo.environment` contains the environment returned by
@@ -1890,6 +1893,28 @@ Future<Containerizer::LaunchResult> MediosContainerizerProcess::_launch(
       if (variable.type() != Environment::Variable::SECRET) {
         containerEnvironment.add_variables()->CopyFrom(variable);
       }
+    }
+  }
+
+  // A container whose environment names no HOME gets its sandbox, which the
+  // task user owns, so tools that write under HOME (uv, pip, Hugging Face)
+  // have a writable home (#46). That happens when the node runs with
+  // --executor_environment_variables and the list leaves out HOME. A HOME
+  // from the node, an isolator or the task is kept.
+  if (container->containerClass() == ContainerClass::DEFAULT) {
+    bool hasHome = false;
+    foreach (const Environment::Variable& variable,
+             containerEnvironment.variables()) {
+      if (variable.name() == "HOME") {
+        hasHome = true;
+        break;
+      }
+    }
+
+    if (!hasHome) {
+      Environment::Variable* variable = containerEnvironment.add_variables();
+      variable->set_name("HOME");
+      variable->set_value(sandboxPath);
     }
   }
 

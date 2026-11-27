@@ -566,6 +566,142 @@ TEST_P(CommandExecutorTest, CGROUPS_ExecutorDomainSockets)
 }
 
 
+// Tests of the HOME a command task runs with (#46). The node's executors
+// get only PATH, and HOME when `nodeHome` is set, from
+// --executor_environment_variables, as the fleet's node units do.
+class CommandTaskHomeTest
+  : public MediosTest,
+    public WithParamInterface<bool>
+{
+protected:
+  // Runs `command` as a command task and stores its terminal state in
+  // `state`. `taskHome`, when set, is the task's own HOME.
+  void runTask(
+      const Option<string>& nodeHome,
+      const Option<string>& taskHome,
+      const string& command,
+      TaskState* state)
+  {
+    Try<Owned<cluster::Controller>> controller = StartController();
+    ASSERT_SOME(controller);
+
+    Owned<ControllerDetector> detector = controller.get()->createDetector();
+
+    node::Flags flags = CreateNodeFlags();
+    flags.http_command_executor = GetParam();
+
+    JSON::Object executorEnvironment;
+    executorEnvironment.values["PATH"] =
+      JSON::String(os::getenv("PATH").getOrElse("/usr/bin:/bin"));
+    if (nodeHome.isSome()) {
+      executorEnvironment.values["HOME"] = JSON::String(nodeHome.get());
+    }
+    flags.executor_environment_variables = executorEnvironment;
+
+    Try<Owned<cluster::Node>> node = StartNode(detector.get(), flags);
+    ASSERT_SOME(node);
+
+    MockScheduler sched;
+    MediosSchedulerDriver driver(
+        &sched,
+        DEFAULT_FRAMEWORK_INFO,
+        controller.get()->pid,
+        DEFAULT_CREDENTIAL);
+
+    EXPECT_CALL(sched, registered(&driver, _, _));
+
+    Future<vector<Offer>> offers;
+    EXPECT_CALL(sched, resourceOffers(&driver, _))
+      .WillOnce(FutureArg<1>(&offers))
+      .WillRepeatedly(Return()); // Ignore subsequent offers.
+
+    driver.start();
+
+    AWAIT_READY(offers);
+    ASSERT_FALSE(offers->empty());
+
+    TaskInfo task = createTask(
+        offers->front().node_id(),
+        offers->front().resources(),
+        command);
+
+    if (taskHome.isSome()) {
+      Environment::Variable* variable =
+        task.mutable_command()->mutable_environment()->add_variables();
+      variable->set_name("HOME");
+      variable->set_type(Environment::Variable::VALUE);
+      variable->set_value(taskHome.get());
+    }
+
+    // A command task reports starting, then running, then its terminal
+    // state, whether the command succeeds or fails.
+    Future<TaskStatus> statusStarting;
+    Future<TaskStatus> statusRunning;
+    Future<TaskStatus> statusTerminal;
+    EXPECT_CALL(sched, statusUpdate(&driver, _))
+      .WillOnce(FutureArg<1>(&statusStarting))
+      .WillOnce(FutureArg<1>(&statusRunning))
+      .WillOnce(FutureArg<1>(&statusTerminal));
+
+    driver.launchTasks(offers->front().id(), {task});
+
+    AWAIT_READY(statusTerminal);
+    *state = statusTerminal->state();
+
+    driver.stop();
+    driver.join();
+  }
+};
+
+
+INSTANTIATE_TEST_CASE_P(
+    HTTPCommandExecutor,
+    CommandTaskHomeTest,
+    ::testing::Bool());
+
+
+// A task whose environment names no HOME gets its sandbox as HOME.
+TEST_P(CommandTaskHomeTest, HomeIsSandboxWhenUnset)
+{
+  TaskState state = TASK_STAGING;
+  runTask(
+      None(),
+      None(),
+      "test -n \"$HOME\" && test \"$HOME\" = \"$MEDIOS_SANDBOX\"",
+      &state);
+
+  EXPECT_EQ(TASK_FINISHED, state);
+}
+
+
+// A HOME the node passes to its executors is kept.
+TEST_P(CommandTaskHomeTest, NodeHomeIsKept)
+{
+  TaskState state = TASK_STAGING;
+  runTask(
+      string("/medios-test-node-home"),
+      None(),
+      "test \"$HOME\" = /medios-test-node-home",
+      &state);
+
+  EXPECT_EQ(TASK_FINISHED, state);
+}
+
+
+// A HOME the task sets is kept.
+TEST_P(CommandTaskHomeTest, TaskHomeIsKept)
+{
+  TaskState state = TASK_STAGING;
+  runTask(
+      None(),
+      string("/medios-test-task-home"),
+      "test \"$HOME\" = /medios-test-task-home",
+      &state);
+
+  EXPECT_EQ(TASK_FINISHED, state);
+}
+
+
 class HTTPCommandExecutorTest
   : public MediosTest {};
 
