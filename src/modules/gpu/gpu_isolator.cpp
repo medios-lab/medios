@@ -4,19 +4,36 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-// GPU isolator module.
+// GPU isolator modules.
 //
 // Built as its own shared library (target `medios_gpu`), never linked into
-// `libmedios`, and loaded into the node through `--modules` and selected
-// with `--isolation=com_medioslab_medios_gpu`. Core has no reference to it:
-// GPU behaviour reaches the container lifecycle only through the Isolator
-// interface, the same seam the cgroups isolators use for cpus and mem.
+// `libmedios`, and loaded into the node through `--modules`. Core has no
+// reference to it: GPU behaviour reaches the container lifecycle only through
+// the Isolator interface, the same seam the cgroups isolators use for cpus
+// and mem.
 //
-// What it does: at prepare() it decides which devices serve the container's
-// claim and declares the device files that container may open, which the
-// containerizer grants once through the device manager (medios#455). At
-// cleanup() it releases the ones it held whole. It also injects the driver
-// libraries into a container that brought its own image.
+// The library registers two isolators:
+//
+//   com_medioslab_medios_gpu_assign   Decides at prepare() which devices serve
+//                                     the container's claim, checkpoints that
+//                                     assignment, and sets CUDA_VISIBLE_DEVICES
+//                                     to it. For a container with its own
+//                                     rootfs, also binds the assigned devices'
+//                                     files and the driver libraries into it.
+//                                     Releases whole devices at cleanup().
+//                                     Needs NVML and a units file, and nothing
+//                                     from the cgroup hierarchy.
+//
+//   com_medioslab_medios_gpu_devices  Reads that assignment back at prepare()
+//                                     and declares the device files the
+//                                     container may open, which the
+//                                     containerizer grants through
+//                                     cgroups/devices (medios#455).
+//
+// A node that cannot create cgroups lists the first alone. A node that can
+// lists both, assign first: the containerizer runs isolator prepare() calls
+// in --isolation order, and the device isolator refuses a GPU container whose
+// assignment it cannot find.
 
 #include <medios/medios.hpp>
 #include <medios/module.hpp>
@@ -44,8 +61,8 @@
 #ifdef __linux__
 // Device delivery is a Linux concept: there is no cgroup devices controller
 // to grant anything elsewhere, and the driver volume is a Linux mount. On
-// other platforms this module still loads and still discovers, so a developer
-// can run the tests, and it delivers nothing.
+// other platforms these modules still load and still discover, so a developer
+// can run the tests, and they deliver nothing.
 #include "modules/gpu/volume.hpp"
 
 #include <sys/mount.h>
@@ -63,6 +80,7 @@
 
 using medios::ContainerID;
 using medios::DeviceAccess;
+using medios::Environment;
 using medios::Parameters;
 using medios::Resources;
 using medios::Value;
@@ -74,6 +92,12 @@ using medios::node::Isolator;
 
 namespace mediosgpu {
 
+// The registered names, also used in log lines and refusals so an operator
+// reading either sees the string they put in --isolation.
+constexpr char ASSIGN_MODULE[] = "com_medioslab_medios_gpu_assign";
+constexpr char DEVICES_MODULE[] = "com_medioslab_medios_gpu_devices";
+
+#ifdef __linux__
 // The amount of a named scalar in a claim, if any. Core no longer knows the
 // GPU resource names; the module does (FAC3-0028).
 static Option<double> scalar(const Resources& resources, const std::string& name)
@@ -86,26 +110,44 @@ static Option<double> scalar(const Resources& resources, const std::string& name
 }
 
 
+// Which declared GPU resource names a claim asks for. Only the names the
+// units file declares are looked at: a node's other resources are none of
+// this module's business.
+template <typename Units>
+static std::vector<std::string> askedResources(
+    const Units& units,
+    const Resources& resources)
+{
+  std::vector<std::string> asked;
+  foreachkey (const std::string& resource, units) {
+    const Option<double> amount = scalar(resources, resource);
+    if (amount.isSome() && *amount != 0.0) {
+      asked.push_back(resource);
+    }
+  }
+  return asked;
+}
+
+
 // Placing a claim reads the bound devices and then adds to them, so two
 // containers preparing at once would otherwise both see the same device free
 // and both be granted it. One mutex covers the read and the write. The
 // in-tree isolator solves the same problem by being a libprocess Process; a
 // module that owns two small containers does not need one.
-#ifdef __linux__
-class GpuIsolator : public Isolator
+class GpuAssignIsolator : public Isolator
 {
 public:
   // One unit per declared resource name: the devices behind it and how much
   // of the resource each of them provides (DR-035). The module knows no
   // resource name it was not given, so a node declaring `gpus` and a node
   // declaring something else are the same code with a different units file.
-  GpuIsolator(
+  GpuAssignIsolator(
       const std::map<std::string, medios::modules::gpu::UnitSet>& _units,
       const Option<medios::internal::node::NvidiaVolume>& _volume)
     : units(_units), volume(_volume) {}
 
   // Containers that outlived the node process. The module keeps what it
-  // granted in memory and checkpoints it under each container's own
+  // assigned in memory and checkpoints it under each container's own
   // directory, which survives the restart along with the container
   // (medios#471): rebuilding the ledger from that checkpoint is what lets a
   // whole-device claim stay refused for a device a survivor still holds,
@@ -137,7 +179,7 @@ public:
             "without guessing which devices it holds");
       }
 
-      // No checkpoint means the container was never granted a GPU claim --
+      // No checkpoint means the container was never assigned a GPU claim --
       // declined at prepare, or a non-GPU container on a GPU node -- and
       // there is nothing for this module to rebuild for it.
       if (checkpoint->isNone()) {
@@ -159,37 +201,25 @@ public:
       // identity that outlives a reboot, and the index and minor number the
       // checkpoint might carry are this process's business to look up fresh,
       // not the previous process's to hand down stale.
-      std::vector<medios::modules::gpu::Device> devices;
-      foreach (const std::string& uuid, saved.deviceUuids) {
-        const medios::modules::gpu::Device* found = nullptr;
-        foreach (
-            const medios::modules::gpu::Device& device,
-            units.at(saved.resource).devices) {
-          if (device.uuid == uuid) {
-            found = &device;
-            break;
-          }
-        }
+      Try<std::vector<medios::modules::gpu::Device>> devices =
+        medios::modules::gpu::devicesByUuid(
+            units.at(saved.resource), saved.deviceUuids);
 
-        if (found == nullptr) {
-          return process::Failure(
-              "GPU module: recovered container " +
-              stringify(state.container_id()) + " checkpointed device '" +
-              uuid + "' under '" + saved.resource + "', which this node no "
-              "longer declares under that name");
-        }
-
-        devices.push_back(*found);
+      if (devices.isError()) {
+        return process::Failure(
+            "GPU module: recovered container " +
+            stringify(state.container_id()) + " checkpointed " +
+            devices.error());
       }
 
       allocations[key] = Allocation{
-          saved.resource, saved.claim, devices, saved.whole, state.directory()};
+          saved.resource, saved.claim, *devices, saved.whole, state.directory()};
 
-      // Only a whole-device grant is bound; a seat grant was never bound in
-      // the first place (see prepare()), so rebuilding it here would refuse a
-      // device its other seat-holders are meant to still share.
+      // Only a whole-device assignment is bound; a seat assignment was never
+      // bound in the first place (see prepare()), so rebuilding it here would
+      // refuse a device its other seat-holders are meant to still share.
       if (saved.whole) {
-        foreach (const medios::modules::gpu::Device& device, devices) {
+        foreach (const medios::modules::gpu::Device& device, *devices) {
           bound.insert(device.uuid);
         }
       }
@@ -216,21 +246,10 @@ public:
       const ContainerConfig& containerConfig) override
   {
     const Resources resources = containerConfig.resources();
+    const std::vector<std::string> asked = askedResources(units, resources);
 
-    // Which declared GPU resource this container asked for. Only the names
-    // the units file declares are looked at: a node's other resources are
-    // none of this module's business.
-    std::vector<std::string> asked;
-    foreachkey (const std::string& resource, units) {
-      const Option<double> amount = scalar(resources, resource);
-      if (amount.isSome() && *amount != 0.0) {
-        asked.push_back(resource);
-      }
-    }
-
-    // A container that asked for no GPUs gets no declarations at all, so a
-    // non-GPU container on a GPU node is untouched and the containerizer's
-    // empty short-circuit applies.
+    // A container that asked for no GPUs is untouched: no assignment, no
+    // checkpoint and no CUDA_VISIBLE_DEVICES.
     if (asked.empty()) {
       return None();
     }
@@ -285,11 +304,12 @@ public:
       allocations[containerId.SerializeAsString()] = Allocation{
           resource, amount, granted, placed->whole, containerConfig.directory()};
 
-      // Checkpointed before declare() for the same reason: a restart between
-      // this point and cleanup() must find the same grant this process is
-      // about to hand out, or the next process's recover() rebuilds nothing
-      // for this container and a later prepare() can give one of its devices
-      // away (medios#471).
+      // Checkpointed before returning, for two readers. A restart between
+      // here and cleanup() must find the same assignment, or the next
+      // process's recover() rebuilds nothing for this container and a later
+      // prepare() can give one of its devices away (medios#471). And the
+      // device isolator, when it is listed, reads this checkpoint in its own
+      // prepare() to learn which device files to declare.
       std::vector<std::string> uuids;
       foreach (const medios::modules::gpu::Device& device, granted) {
         uuids.push_back(device.uuid);
@@ -301,24 +321,77 @@ public:
               resource, amount, uuids, placed->whole});
 
       if (checkpointed.isError()) {
-        // The grant is already recorded in `allocations` above (and, if
+        // The assignment is already recorded in `allocations` above (and, if
         // whole, in `bound`), so cleanup() -- guaranteed after this failure
-        // -- still releases it. A grant this module cannot checkpoint is
-        // exactly the state medios#471 exists to close, so it is refused
+        // -- still releases it. An assignment this module cannot checkpoint
+        // is exactly the state medios#471 exists to close, so it is refused
         // rather than handed out uncheckpointed.
         return process::Failure(
-            "GPU module: could not checkpoint the granted device set: " +
+            "GPU module: could not checkpoint the assigned device set: " +
             checkpointed.error());
       }
     }
 
-    return declare(containerId, containerConfig, resource, granted);
+    // CUDA_VISIBLE_DEVICES is what makes the assignment take effect when no
+    // device isolator restricts the container: CUDA in the task enumerates
+    // only the named devices. It does not stop a task from opening the other
+    // device files or from setting the variable itself in its command; only
+    // the device isolator does that.
+    //
+    // A command executor reads the task environment; everything else reads
+    // the container environment. Same split injectVolume() makes.
+    Environment environment;
+    Environment::Variable* variable = environment.add_variables();
+    variable->set_name("CUDA_VISIBLE_DEVICES");
+    variable->set_type(Environment::Variable::VALUE);
+    variable->set_value(medios::modules::gpu::visibleDevices(granted));
+
+    ContainerLaunchInfo launchInfo;
+    if (containerConfig.has_task_info()) {
+      *launchInfo.mutable_task_environment() = environment;
+    } else {
+      *launchInfo.mutable_environment() = environment;
+    }
+
+    // A container with its own rootfs gets a private /dev that holds only the
+    // standard device nodes, and its image's libraries in place of the
+    // host's. CUDA in it needs the assigned devices' files and the driver
+    // libraries, and the device isolator is not always listed, so both are
+    // bound in here. A container without a rootfs sees the host's /dev and
+    // libraries and needs neither.
+    if (containerConfig.has_rootfs()) {
+      Try<Nothing> delivered =
+        deliverIntoRootfs(containerConfig, granted, &launchInfo);
+      if (delivered.isError()) {
+        // The assignment is recorded in `allocations`, so cleanup(), which
+        // the containerizer runs after a failed prepare(), releases it.
+        return process::Failure(
+            std::string(ASSIGN_MODULE) + ": container " +
+            stringify(containerId) + ": " + delivered.error());
+      }
+    }
+
+    // The UUIDs, because the count alone cannot say which device a container
+    // is on: seat holders share a device, and on a node with several devices
+    // the count is the same whichever one was placed (medios#482).
+    std::vector<std::string> held;
+    foreach (const medios::modules::gpu::Device& device, granted) {
+      held.push_back(
+          device.uuid + " (index " + stringify(device.index) + ")");
+    }
+
+    LOG(INFO) << "GPU module: container " << containerId << " assigned "
+              << granted.size() << " '" << resource << "' device(s) "
+              << strings::join(", ", held) << "; CUDA_VISIBLE_DEVICES="
+              << variable->value();
+
+    return launchInfo;
   }
 
-  // A declaration is made once, at prepare, so the device set a container
+  // An assignment is made once, at prepare, so the device set a container
   // holds cannot change after it starts. The base implementation is a no-op,
   // which would accept a change and silently not apply it: a container would
-  // be charged for a GPU it cannot open, or keep one it no longer holds.
+  // be charged for a GPU it cannot use, or keep one it no longer holds.
   // Refused by name instead. Dropping dynamic change is recorded on #450;
   // the case that reaches here is a second task landing in an existing
   // executor, since a container's resources are the sum of its tasks.
@@ -357,18 +430,18 @@ public:
 
     // A container this module holds nothing for is still refused if it has
     // grown a GPU claim, which is a GPU task landing in an executor that
-    // started without one. prepare() declined that container and made no
-    // declaration, so there is no device it can open; letting the update
-    // through would charge it for one anyway. Growth from zero is the same
-    // refusal as growth from one, and this is the shape it takes.
+    // started without one. prepare() declined that container and assigned
+    // nothing, so there is no device it can use; letting the update through
+    // would charge it for one anyway. Growth from zero is the same refusal as
+    // growth from one, and this is the shape it takes.
     if (resource.isNone()) {
       foreachkey (const std::string& name, units) {
         const Option<double> claim = scalar(resourceRequests, name);
         if (claim.isSome() && *claim != 0.0) {
           return process::Failure(
-              "This module cannot add devices to a running container: access "
-              "is declared once at prepare, and this container was prepared "
-              "without any. It has grown a '" + name + "' claim of " +
+              "This module cannot add devices to a running container: the "
+              "assignment is made once at prepare, and this container was "
+              "prepared without one. It has grown a '" + name + "' claim of " +
               stringify(*claim) + ", which no device on this node can serve. "
               "Run the GPU task in its own executor.");
         }
@@ -391,7 +464,7 @@ public:
         return process::Failure(
             "This container holds '" + *resource + "' devices and has grown a "
             "'" + name + "' claim of " + stringify(*other) + ". A container "
-            "holds devices under one resource name, and access is declared "
+            "holds devices under one resource name, and the assignment is made "
             "once at prepare, so the second name cannot be served. Run the "
             "GPU task in its own executor.");
       }
@@ -415,32 +488,32 @@ public:
     // when the call fails, so refusing a shrink kills an executor on normal
     // task completion — which is what refusing every change did.
     //
-    // Nothing is revoked here. The container keeps access to the devices it
-    // was granted until cleanup, which over-grants to a container relative to
-    // its claim but never grants a whole device to a second container: the
-    // devices are unbound at cleanup, not at shrink. Revoking mid-life would
-    // mean changing a declaration already granted, which this seam cannot
-    // express.
+    // Nothing is revoked here. The container keeps its assigned devices until
+    // cleanup, which over-grants to a container relative to its claim but
+    // never assigns a whole device to a second container: the devices are
+    // unbound at cleanup, not at shrink. Revoking mid-life would mean
+    // changing an environment and a device declaration already in effect,
+    // which this seam cannot express.
     if (amount <= held) {
       if (amount < held) {
         LOG(INFO) << "GPU module: container " << containerId << " '"
                   << *resource << "' claim fell from " << held << " to "
-                  << amount << "; access to the granted devices persists "
+                  << amount << "; its assigned devices stay assigned "
                   << "until cleanup";
       }
       return Nothing();
     }
 
-    // Growth cannot be honoured. A declaration is made once at prepare and
-    // granted by the containerizer, so anything added now would be charged to
-    // the container without being openable by it. The case that reaches here
-    // is a second GPU task landing in an existing executor, since a
-    // container's resources are the sum of its tasks.
+    // Growth cannot be honoured. The assignment is made once at prepare, so
+    // anything added now would be charged to the container without being
+    // usable by it. The case that reaches here is a second GPU task landing
+    // in an existing executor, since a container's resources are the sum of
+    // its tasks.
     return process::Failure(
-        "This module cannot add devices to a running container: access is "
-        "declared once at prepare, so a container holding " + stringify(held) +
-        " of '" + *resource + "' cannot grow to " + stringify(amount) + ". Run "
-        "one GPU task per executor.");
+        "This module cannot add devices to a running container: the "
+        "assignment is made once at prepare, so a container holding " +
+        stringify(held) + " of '" + *resource + "' cannot grow to " +
+        stringify(amount) + ". Run one GPU task per executor.");
   }
 
   process::Future<Nothing> cleanup(const ContainerID& containerId) override
@@ -455,7 +528,7 @@ public:
     }
 
     // Released here, not at shrink, so a device held whole is never offered
-    // to a second container while the first can still open it.
+    // to a second container while the first can still use it.
     //
     // Only a container that took its devices whole releases them. A container
     // holding a share of a device recorded nothing, and erasing its UUID here
@@ -486,91 +559,50 @@ public:
   }
 
 private:
-  process::Future<Option<ContainerLaunchInfo>> declare(
-      const ContainerID& containerId,
+  // Binds the files of the assigned devices, the driver control device and
+  // the unified-memory devices that exist on the host into the container's
+  // rootfs at their host paths, then injects the driver volume. The files
+  // are the ones the device isolator declares, so a node listing both
+  // isolators grants access to exactly the files bound here.
+  Try<Nothing> deliverIntoRootfs(
       const ContainerConfig& containerConfig,
-      const std::string& resource,
-      const std::vector<medios::modules::gpu::Device>& granted)
+      const std::vector<medios::modules::gpu::Device>& granted,
+      ContainerLaunchInfo* launchInfo)
   {
-    Try<std::vector<DeviceAccess>> declarations =
+    Try<std::vector<DeviceAccess>> files =
       medios::modules::gpu::deviceDeclarations(granted, [](const std::string& path) {
         return os::exists(path);
       });
 
-    if (declarations.isError()) {
-      return process::Failure(declarations.error());
+    if (files.isError()) {
+      return Error(files.error());
     }
 
-    ContainerLaunchInfo launchInfo;
-    foreach (const DeviceAccess& declaration, *declarations) {
-      *launchInfo.add_devices() = declaration;
+    foreach (const medios::modules::gpu::DeviceMount& mount,
+             medios::modules::gpu::deviceMounts(*files, containerConfig.rootfs())) {
+      *launchInfo->add_mounts() =
+        medios::internal::protobuf::node::createContainerMount(
+            mount.source, mount.target, MS_BIND);
     }
 
-    // A container with its own filesystem gets a private /dev holding only the
-    // standard nodes, so the declarations above would grant it the right to
-    // open device files that are not there. Bind the host's nodes in at the
-    // paths the declarations name. A container without a rootfs sees the
-    // host's /dev already and needs none of this.
-    if (containerConfig.has_rootfs()) {
-      const std::vector<medios::modules::gpu::DeviceMount> mounts =
-        medios::modules::gpu::deviceMounts(
-            *declarations, containerConfig.rootfs());
-
-      foreach (const medios::modules::gpu::DeviceMount& mount, mounts) {
-        *launchInfo.add_mounts() =
-          medios::internal::protobuf::node::createContainerMount(
-              mount.source, mount.target, MS_BIND);
-      }
-    }
-
-    // The driver libraries, for a container whose image replaced the
-    // filesystem. Deliberately independent of the device declarations above:
-    // the in-tree isolator returns early when there is no rootfs, but it
-    // grants devices from update() rather than from prepare(), so returning
-    // early here would have left such a container with no device access at
-    // all. A container without a rootfs sees the host's libraries already and
-    // needs no injection; it still needs its devices.
-    Try<Nothing> injected = injectVolume(containerConfig, &launchInfo);
-    if (injected.isError()) {
-      return process::Failure(injected.error());
-    }
-
-    // The UUIDs, because the count alone cannot say which card a container is
-    // on: seat holders share a device, and on a node with several devices the
-    // count is the same whichever one was placed (medios#482).
-    std::vector<std::string> held;
-    foreach (const medios::modules::gpu::Device& device, granted) {
-      held.push_back(
-          device.uuid + " (index " + stringify(device.index) + ")");
-    }
-
-    LOG(INFO) << "GPU module: container " << containerId << " granted "
-              << granted.size() << " '" << resource << "' device(s) "
-              << strings::join(", ", held) << "; declared "
-              << declarations->size() << " device file(s); "
-              << (containerConfig.has_rootfs()
-                    ? "bound them into its rootfs"
-                    : "no rootfs, so it uses the host's /dev");
-
-    return launchInfo;
+    return injectVolume(containerConfig, launchInfo);
   }
 
-  // Mounts the driver volume read-only into the container and puts its
-  // directories on PATH and LD_LIBRARY_PATH. Nothing is injected for a
-  // container that has no image of its own, or for an image the volume
-  // declines.
+  // Mounts the driver volume read-only into the container's rootfs and puts
+  // its directories on PATH and LD_LIBRARY_PATH. Nothing is injected when the
+  // volume could not be created at load, or for an image the volume declines.
   Try<Nothing> injectVolume(
       const ContainerConfig& containerConfig,
       ContainerLaunchInfo* launchInfo)
   {
-    if (volume.isNone() || !containerConfig.has_rootfs()) {
+    if (volume.isNone()) {
       return Nothing();
     }
 
     // Only a Docker image carries the manifest the volume inspects. A
     // container with a rootfs from elsewhere is left alone rather than
-    // refused: it has its devices, and whether its libraries suffice is its
-    // own business.
+    // refused: its device files are bound in, and whether its own libraries
+    // suffice depends on its image.
     if (!containerConfig.has_docker() ||
         !containerConfig.docker().has_manifest()) {
       LOG(INFO) << "GPU module: no Docker manifest for this container; "
@@ -606,12 +638,13 @@ private:
             medios::modules::gpu::volumeMountFlags(mount.mode));
     }
 
-    // A command executor reads the task environment; everything else reads
-    // the container environment. Same split the in-tree isolator makes.
+    // Added to the environment that already holds CUDA_VISIBLE_DEVICES, in
+    // the same place prepare() put it: the task environment for a command
+    // executor, the container environment otherwise.
     if (containerConfig.has_task_info()) {
-      *launchInfo->mutable_task_environment() = volume->ENV(manifest);
+      launchInfo->mutable_task_environment()->MergeFrom(volume->ENV(manifest));
     } else {
-      *launchInfo->mutable_environment() = volume->ENV(manifest);
+      launchInfo->mutable_environment()->MergeFrom(volume->ENV(manifest));
     }
 
     return Nothing();
@@ -648,19 +681,152 @@ private:
   // Serialised ids of containers recovered from a previous node process.
   hashset<std::string> recovered;
 };
-#else
-// Elsewhere: loads, discovers, delivers nothing.
-class GpuIsolator : public Isolator
+
+
+// Restricts a container to the devices the assignment isolator assigned it.
+//
+// Keeps no state of its own. The assignment isolator checkpoints each
+// assignment under the container's directory before its prepare() returns,
+// and the containerizer runs prepare() calls in --isolation order, one after
+// another, so by the time this prepare() runs the checkpoint is the
+// assignment. Reading it instead of sharing the other isolator's memory means
+// the two modules hold no reference to each other, and a node restart needs
+// no recover() here: nothing in this isolator outlives one prepare() call.
+class GpuDevicesIsolator : public Isolator
 {
 public:
-  explicit GpuIsolator(const std::vector<medios::modules::gpu::Device>&) {}
+  explicit GpuDevicesIsolator(
+      const std::map<std::string, medios::modules::gpu::UnitSet>& _units)
+    : units(_units) {}
+
+  process::Future<Option<ContainerLaunchInfo>> prepare(
+      const ContainerID& containerId,
+      const ContainerConfig& containerConfig) override
+  {
+    // The checkpoint is read first, for every container. Deciding from this
+    // isolator's own units file whether a container asked for a GPU would
+    // skip a container the assignment isolator did assign when the two units
+    // files disagree, and that container would start with
+    // CUDA_VISIBLE_DEVICES naming a device it is not allowed to open.
+    Try<Option<medios::modules::gpu::AllocationCheckpoint>> checkpoint =
+      medios::modules::gpu::readAllocationCheckpoint(
+          containerConfig.directory());
+
+    if (checkpoint.isError()) {
+      return process::Failure(
+          std::string(DEVICES_MODULE) + ": the assignment checkpoint for "
+          "container " + stringify(containerId) + " could not be read: " +
+          checkpoint.error());
+    }
+
+    if (checkpoint->isNone()) {
+      const std::vector<std::string> asked =
+        askedResources(units, containerConfig.resources());
+
+      // No assignment and no GPU claim: a non-GPU container on a GPU node,
+      // which gets no declarations at all, so the containerizer's empty
+      // short-circuit applies.
+      if (asked.empty()) {
+        return None();
+      }
+
+      // A GPU claim with no assignment is a node configured without the
+      // assignment isolator, or with it listed after this one. Declaring
+      // nothing would start a container the controller charged for a GPU it
+      // cannot open, so the launch is refused and the refusal names the fix.
+      return process::Failure(
+          std::string(DEVICES_MODULE) + ": container " +
+          stringify(containerId) + " asked for '" + asked.front() + "' but no "
+          "device assignment was recorded for it. List " + ASSIGN_MODULE +
+          " before " + DEVICES_MODULE + " in --isolation.");
+    }
+
+    const medios::modules::gpu::AllocationCheckpoint& assigned = **checkpoint;
+
+    if (units.count(assigned.resource) == 0) {
+      return process::Failure(
+          std::string(DEVICES_MODULE) + ": container " +
+          stringify(containerId) + " was assigned '" + assigned.resource +
+          "' devices, which the units file this module loaded does not "
+          "declare. Give both GPU isolators the same units file.");
+    }
+
+    Try<std::vector<medios::modules::gpu::Device>> granted =
+      medios::modules::gpu::devicesByUuid(
+          units.at(assigned.resource), assigned.deviceUuids);
+
+    if (granted.isError()) {
+      return process::Failure(
+          std::string(DEVICES_MODULE) + ": container " +
+          stringify(containerId) + " was assigned " + granted.error() +
+          ". Give both GPU isolators the same units file.");
+    }
+
+    return declare(containerId, assigned.resource, *granted);
+  }
+
+private:
+  process::Future<Option<ContainerLaunchInfo>> declare(
+      const ContainerID& containerId,
+      const std::string& resource,
+      const std::vector<medios::modules::gpu::Device>& granted)
+  {
+    Try<std::vector<DeviceAccess>> declarations =
+      medios::modules::gpu::deviceDeclarations(granted, [](const std::string& path) {
+        return os::exists(path);
+      });
+
+    if (declarations.isError()) {
+      return process::Failure(declarations.error());
+    }
+
+    ContainerLaunchInfo launchInfo;
+    foreach (const DeviceAccess& declaration, *declarations) {
+      *launchInfo.add_devices() = declaration;
+    }
+
+    // The declarations only grant access. For a container with its own
+    // rootfs, the assignment isolator has already bound these files into it.
+    LOG(INFO) << "GPU module: container " << containerId << " declared "
+              << declarations->size() << " device file(s) for its "
+              << granted.size() << " '" << resource << "' device(s)";
+
+    return launchInfo;
+  }
+
+  const std::map<std::string, medios::modules::gpu::UnitSet> units;
+};
+#else
+// Elsewhere: load, discover, deliver nothing.
+class GpuAssignIsolator : public Isolator
+{
+public:
+  explicit GpuAssignIsolator(const std::vector<medios::modules::gpu::Device>&) {}
+};
+
+class GpuDevicesIsolator : public Isolator
+{
+public:
+  explicit GpuDevicesIsolator(const std::vector<medios::modules::gpu::Device>&) {}
 };
 #endif // __linux__
 
 } // namespace mediosgpu {
 
 
-static Isolator* create(const Parameters& parameters)
+// What both isolators need before they can be constructed: the operator's
+// units file, read and checked against what the driver reports. None, with
+// the reason logged under `module`'s name, when either cannot be had.
+struct LoadedUnits
+{
+  std::vector<medios::modules::gpu::Device> discovered;
+  std::map<std::string, medios::modules::gpu::UnitSet> byResource;
+};
+
+
+static Option<LoadedUnits> loadUnits(
+    const Parameters& parameters,
+    const char* module)
 {
   // The operator's declaration of what this host has, and what each GPU
   // resource name means on it (DR-034, FAC3-0028). Required: a module with no
@@ -675,26 +841,26 @@ static Isolator* create(const Parameters& parameters)
   }
 
   if (path.isNone()) {
-    LOG(ERROR) << "GPU module: no 'units' parameter. Point it at the units "
+    LOG(ERROR) << module << ": no 'units' parameter. Point it at the units "
                << "file that says which devices each GPU resource name means "
                << "on this host (medios#467)";
-    return nullptr;
+    return None();
   }
 
   Try<std::string> contents = os::read(*path);
   if (contents.isError()) {
-    LOG(ERROR) << "GPU module: cannot read the units file '" << *path
+    LOG(ERROR) << module << ": cannot read the units file '" << *path
                << "': " << contents.error();
-    return nullptr;
+    return None();
   }
 
   Try<std::vector<medios::modules::gpu::UnitDeclaration>> declarations =
     medios::modules::gpu::parseUnits(*contents);
 
   if (declarations.isError()) {
-    LOG(ERROR) << "GPU module: the units file '" << *path << "' is not usable: "
+    LOG(ERROR) << module << ": the units file '" << *path << "' is not usable: "
                << declarations.error();
-    return nullptr;
+    return None();
   }
 
   // Discovery second, because it is now checked against the declaration
@@ -708,14 +874,14 @@ static Isolator* create(const Parameters& parameters)
     medios::modules::gpu::discover(*source);
 
   if (discovered.isError()) {
-    LOG(ERROR) << "GPU module: device discovery failed: " << discovered.error()
+    LOG(ERROR) << module << ": device discovery failed: " << discovered.error()
                << "; the units file declares devices that cannot be checked "
                << "against this host, so the module refuses to load";
-    return nullptr;
+    return None();
   }
 
   foreach (const medios::modules::gpu::Device& device, *discovered) {
-    LOG(INFO) << "GPU module: device " << device.index
+    LOG(INFO) << module << ": device " << device.index
               << " is /dev/nvidia" << device.minorNumber
               << " (" << device.uuid << ")";
   }
@@ -724,52 +890,100 @@ static Isolator* create(const Parameters& parameters)
     medios::modules::gpu::resolveUnits(*declarations, *discovered);
 
   if (units.isError()) {
-    LOG(ERROR) << "GPU module: the units file '" << *path << "' cannot be "
+    LOG(ERROR) << module << ": the units file '" << *path << "' cannot be "
                << "honoured on this host: " << units.error();
-    return nullptr;
+    return None();
   }
 
-#ifdef __linux__
-  std::map<std::string, medios::modules::gpu::UnitSet> byResource;
-  foreach (const medios::modules::gpu::UnitSet& unit, *units) {
-    byResource.emplace(unit.resource, unit);
+  LoadedUnits loaded;
+  loaded.discovered = *discovered;
 
-    LOG(INFO) << "GPU module: '" << unit.resource << "' is "
+  foreach (const medios::modules::gpu::UnitSet& unit, *units) {
+    loaded.byResource.emplace(unit.resource, unit);
+
+    LOG(INFO) << module << ": '" << unit.resource << "' is "
               << unit.devices.size() << " device(s) from " << *path
               << ", each providing " << unit.perDevice << "; this node's "
               << "--resources should declare "
               << unit.perDevice * unit.devices.size();
   }
 
-  // The driver volume is what a container with its own image needs to find
-  // the libraries. Its absence is logged and does not refuse the load: device
-  // access does not depend on it, and a container without an image of its own
-  // never needed it.
+  return loaded;
+}
+
+
+static Isolator* createAssign(const Parameters& parameters)
+{
+  Option<LoadedUnits> loaded =
+    loadUnits(parameters, mediosgpu::ASSIGN_MODULE);
+
+  if (loaded.isNone()) {
+    return nullptr;
+  }
+
+#ifdef __linux__
+  // The driver volume holds the libraries a container with its own image
+  // needs. Its absence is logged and does not refuse the load: assignment
+  // does not depend on it, and a container without its own rootfs uses the
+  // host's libraries.
   Option<medios::internal::node::NvidiaVolume> volume;
 
   Try<medios::internal::node::NvidiaVolume> created =
     medios::internal::node::NvidiaVolume::create();
 
   if (created.isError()) {
-    LOG(WARNING) << "GPU module: the driver volume is unavailable: "
-                 << created.error()
-                 << "; devices will be granted without injected libraries";
+    LOG(WARNING) << mediosgpu::ASSIGN_MODULE << ": the driver volume is "
+                 << "unavailable: " << created.error()
+                 << "; containers with their own rootfs will get no driver libraries";
   } else {
     volume = *created;
   }
 
-  return new mediosgpu::GpuIsolator(byResource, volume);
+  return new mediosgpu::GpuAssignIsolator(loaded->byResource, volume);
 #else
-  return new mediosgpu::GpuIsolator(*discovered);
+  return new mediosgpu::GpuAssignIsolator(loaded->discovered);
 #endif // __linux__
 }
 
 
-medios::modules::Module<Isolator> com_medioslab_medios_gpu(
+static Isolator* createDevices(const Parameters& parameters)
+{
+  // The same units file as the assignment isolator. The devices isolator
+  // needs it to tell a GPU container from any other and to resolve an
+  // assigned UUID to its device file; a mismatch between the two files is
+  // refused at prepare, naming the device.
+  Option<LoadedUnits> loaded =
+    loadUnits(parameters, mediosgpu::DEVICES_MODULE);
+
+  if (loaded.isNone()) {
+    return nullptr;
+  }
+
+#ifdef __linux__
+  return new mediosgpu::GpuDevicesIsolator(loaded->byResource);
+#else
+  return new mediosgpu::GpuDevicesIsolator(loaded->discovered);
+#endif // __linux__
+}
+
+
+medios::modules::Module<Isolator> com_medioslab_medios_gpu_assign(
     MEDIOS_MODULE_API_VERSION,
     MEDIOS_VERSION,
     "medios-lab",
     "https://github.com/medios-lab",
-    "GPU isolator module.",
+    "GPU assignment isolator: places each claim on devices and sets "
+    "CUDA_VISIBLE_DEVICES.",
     nullptr, // No compatibility check.
-    create);
+    createAssign);
+
+
+medios::modules::Module<Isolator> com_medioslab_medios_gpu_devices(
+    MEDIOS_MODULE_API_VERSION,
+    MEDIOS_VERSION,
+    "medios-lab",
+    "https://github.com/medios-lab",
+    "GPU device isolator: restricts each container to its assigned devices "
+    "through cgroups/devices.",
+    nullptr, // No compatibility check.
+    createDevices);

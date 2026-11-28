@@ -370,6 +370,32 @@ Try<Placement> place(
   return Placement{free, true};
 }
 
+
+Try<vector<Device>> devicesByUuid(
+    const UnitSet& unit,
+    const vector<string>& uuids)
+{
+  vector<Device> devices;
+  foreach (const string& uuid, uuids) {
+    const Device* found = nullptr;
+    foreach (const Device& device, unit.devices) {
+      if (device.uuid == uuid) {
+        found = &device;
+        break;
+      }
+    }
+
+    if (found == nullptr) {
+      return Error("device '" + uuid + "' is not declared under '" +
+                   unit.resource + "' on this node");
+    }
+
+    devices.push_back(*found);
+  }
+
+  return devices;
+}
+
 } // namespace gpu {
 } // namespace modules {
 } // namespace medios {

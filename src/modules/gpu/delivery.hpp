@@ -82,6 +82,15 @@ std::vector<DeviceMount> deviceMounts(
 std::string devicePath(const Device& device);
 
 
+// The value of CUDA_VISIBLE_DEVICES for a container assigned `granted`: the
+// driver UUIDs, comma-separated, in assignment order.
+//
+// UUIDs, not indices. CUDA enumerates devices fastest first unless
+// CUDA_DEVICE_ORDER says otherwise, so CUDA's device 0 need not be NVML's
+// index 0; a UUID names the same device to both.
+std::string visibleDevices(const std::vector<Device>& granted);
+
+
 // What one mount of the driver volume is for. The mount flags stay with the
 // isolator, which is compiled only for Linux; the sequence lives here, where
 // a test can read it on any host.
